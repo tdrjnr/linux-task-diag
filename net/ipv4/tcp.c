@@ -1108,6 +1108,23 @@ int tcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t size)
 	lock_sock(sk);
 
 	flags = msg->msg_flags;
+
+	if (unlikely(tp->repair)) {
+		err = -EINVAL;
+		if (tp->repair_queue == TCP_NO_QUEUE)
+			goto out_err;
+
+		if (sk->sk_state != TCP_ESTABLISHED)
+			goto out_err;
+
+		if (tp->repair_queue == TCP_RECV_QUEUE) {
+			copied = tcp_send_rcvq(sk, msg, size);
+			goto out_nopush;
+		}
+
+		/* 'common' sending to sendq */
+	}
+
 	if (flags & MSG_FASTOPEN) {
 		err = tcp_sendmsg_fastopen(sk, msg, &copied_syn, size);
 		if (err == -EINPROGRESS && copied_syn > 0)
@@ -1129,22 +1146,6 @@ int tcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t size)
 		err = sk_stream_wait_connect(sk, &timeo);
 		if (err != 0)
 			goto do_error;
-	}
-
-	if (unlikely(tp->repair)) {
-		err = -EINVAL;
-		if (tp->repair_queue == TCP_NO_QUEUE)
-			goto out_err;
-
-		if (sk->sk_state != TCP_ESTABLISHED)
-			goto out_err;
-
-		if (tp->repair_queue == TCP_RECV_QUEUE) {
-			copied = tcp_send_rcvq(sk, msg, size);
-			goto out_nopush;
-		}
-
-		/* 'common' sending to sendq */
 	}
 
 	sockc.tsflags = sk->sk_tsflags;
