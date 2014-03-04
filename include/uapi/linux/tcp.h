@@ -116,6 +116,7 @@ enum {
 #define TCP_SAVE_SYN		27	/* Record SYN headers for new connections */
 #define TCP_SAVED_SYN		28	/* Get SYN headers recorded for connection */
 #define TCP_REPAIR_WINDOW	29	/* Get/set window parameters */
+#define TCP_REPAIR_STATE	30	/* Current state of this connection */
 
 struct tcp_repair_opt {
 	__u32	opt_code;

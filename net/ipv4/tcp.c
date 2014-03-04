@@ -1094,6 +1094,55 @@ static int tcp_sendmsg_fastopen(struct sock *sk, struct msghdr *msg,
 	return err;
 }
 
+static int tcp_repair_state(struct sock *sk, int state)
+{
+	struct tcp_sock *tp = tcp_sk(sk);
+
+	if (sk->sk_state != TCP_ESTABLISHED)
+		return -EINVAL;
+
+	switch (state) {
+	case TCP_ESTABLISHED:
+		break;
+
+	case TCP_FIN_WAIT2:
+	case TCP_TIME_WAIT:
+		if (tp->snd_una != tp->write_seq)
+			return -EINVAL;
+
+		tcp_set_state(sk, TCP_FIN_WAIT2);
+
+		if (state == TCP_TIME_WAIT)
+			tcp_fin(sk);
+
+		break;
+
+	case TCP_CLOSE_WAIT:
+	case TCP_LAST_ACK:
+		tcp_fin(sk);
+
+		if (state == TCP_CLOSE_WAIT)
+			break;
+
+		/* fall-through */
+	case TCP_FIN_WAIT1:
+	case TCP_CLOSING:
+		tcp_shutdown(sk, SEND_SHUTDOWN);
+
+		if ((1 << state) & (TCPF_FIN_WAIT1 |
+					TCPF_LAST_ACK))
+			break;
+
+		tcp_fin(sk);
+		break;
+
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 int tcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t size)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
@@ -2526,6 +2575,13 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 					optlen);
 		else
 			err = -EPERM;
+		break;
+
+	case TCP_REPAIR_STATE:
+		if (tp->repair)
+			err = tcp_repair_state(sk, val);
+		else
+			err = -EINVAL;
 		break;
 
 	case TCP_CORK:
