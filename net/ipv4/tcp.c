@@ -2486,6 +2486,7 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 		} else if (val == 0) {
 			tp->repair = 0;
 			sk->sk_reuse = SK_NO_REUSE;
+			tp->repair_queue = TCP_NO_QUEUE;
 			tcp_send_window_probe(sk);
 		} else
 			err = -EINVAL;
