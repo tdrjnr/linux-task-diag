@@ -18,6 +18,7 @@
 
 #include <linux/kernel.h>
 #include <linux/taskstats_kern.h>
+#include <linux/task_diag.h>
 #include <linux/tsacct_kern.h>
 #include <linux/delayacct.h>
 #include <linux/cpumask.h>
@@ -41,7 +42,7 @@ static DEFINE_PER_CPU(__u32, taskstats_seqnum);
 static int family_registered;
 struct kmem_cache *taskstats_cache;
 
-static struct genl_family family = {
+struct genl_family taskstats_family = {
 	.id		= GENL_ID_GENERATE,
 	.name		= TASKSTATS_GENL_NAME,
 	.version	= TASKSTATS_GENL_VERSION,
@@ -92,9 +93,9 @@ static int prepare_reply(struct genl_info *info, u8 cmd, struct sk_buff **skbp,
 	if (!info) {
 		int seq = this_cpu_inc_return(taskstats_seqnum) - 1;
 
-		reply = genlmsg_put(skb, 0, seq, &family, 0, cmd);
+		reply = genlmsg_put(skb, 0, seq, &taskstats_family, 0, cmd);
 	} else
-		reply = genlmsg_put_reply(skb, info, &family, 0, cmd);
+		reply = genlmsg_put_reply(skb, info, &taskstats_family, 0, cmd);
 	if (reply == NULL) {
 		nlmsg_free(skb);
 		return -EINVAL;
@@ -664,6 +665,15 @@ err:
 	nlmsg_free(rep_skb);
 }
 
+#ifdef CONFIG_TASK_DIAG
+static const struct nla_policy
+			taskdiag_cmd_get_policy[TASK_DIAG_CMD_ATTR_MAX+1] = {
+	[TASK_DIAG_CMD_ATTR_GET]  = {	.type = NLA_UNSPEC,
+					.len = sizeof(struct task_diag_pid)
+				},
+};
+#endif
+
 static const struct genl_ops taskstats_ops[] = {
 	{
 		.cmd		= TASKSTATS_CMD_GET,
@@ -676,6 +686,13 @@ static const struct genl_ops taskstats_ops[] = {
 		.doit		= cgroupstats_user_cmd,
 		.policy		= cgroupstats_cmd_get_policy,
 	},
+#ifdef CONFIG_TASK_DIAG
+	{
+		.cmd		= TASK_DIAG_CMD_GET,
+		.doit		= taskdiag_doit,
+		.policy		= taskdiag_cmd_get_policy,
+	},
+#endif
 };
 
 /* Needed early in initialization */
@@ -694,7 +711,7 @@ static int __init taskstats_init(void)
 {
 	int rc;
 
-	rc = genl_register_family_with_ops(&family, taskstats_ops);
+	rc = genl_register_family_with_ops(&taskstats_family, taskstats_ops);
 	if (rc)
 		return rc;
 
