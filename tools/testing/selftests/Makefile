@@ -18,6 +18,7 @@ TARGETS += timers
 TARGETS += user
 TARGETS += vm
 TARGETS += x86
+TARGETS += task_diag
 #Please keep the TARGETS list alphabetically sorted
 
 TARGETS_HOTPLUG = cpu-hotplug
