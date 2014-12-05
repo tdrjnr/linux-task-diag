@@ -15,6 +15,8 @@
 extern struct kmem_cache *taskstats_cache;
 extern struct mutex taskstats_exit_mutex;
 
+extern struct genl_family taskstats_family;
+
 static inline void taskstats_tgid_free(struct signal_struct *sig)
 {
 	if (sig->stats)
@@ -23,6 +25,11 @@ static inline void taskstats_tgid_free(struct signal_struct *sig)
 
 extern void taskstats_exit(struct task_struct *, int group_dead);
 extern void taskstats_init_early(void);
+
+struct genl_info;
+struct sk_buff;
+int taskdiag_doit(struct sk_buff *skb, struct genl_info *info);
+
 #else
 static inline void taskstats_exit(struct task_struct *tsk, int group_dead)
 {}

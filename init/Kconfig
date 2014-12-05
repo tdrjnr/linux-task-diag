@@ -432,6 +432,18 @@ config TASKSTATS
 
 	  Say N if unsure.
 
+config TASK_DIAG
+	bool "Export task/process properties through netlink"
+	depends on NET && TASKSTATS
+	default n
+	help
+	  Export selected properties for tasks/processes through the
+	  generic netlink interface. Unlike the proc file system, task_diag
+	  returns information in a binary format, allows to specify which
+	  information are required.
+
+	  Say N if unsure.
+
 config TASK_DELAY_ACCT
 	bool "Enable per-task delay accounting"
 	depends on TASKSTATS
