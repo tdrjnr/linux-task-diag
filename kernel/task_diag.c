@@ -112,6 +112,46 @@ err:
 	return err;
 }
 
+int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
+{
+	struct pid_namespace *ns = task_active_pid_ns(current);
+	struct tgid_iter iter;
+	struct nlattr *na;
+	struct task_diag_pid req;
+	int rc;
+
+	if (nlmsg_len(cb->nlh) < GENL_HDRLEN + sizeof(req))
+		return -EINVAL;
+
+	na = nlmsg_data(cb->nlh) + GENL_HDRLEN;
+	if (na->nla_type < 0)
+		return -EINVAL;
+
+	memcpy(&req, nla_data(na), sizeof(req));
+
+	iter.tgid = cb->args[0];
+	iter.task = NULL;
+	for (iter = next_tgid(ns, iter);
+	     iter.task;
+	     iter.tgid += 1, iter = next_tgid(ns, iter)) {
+		if (!ptrace_may_access(iter.task, PTRACE_MODE_READ))
+			continue;
+
+		rc = task_diag_fill(iter.task, skb, req.show_flags,
+				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq);
+		if (rc < 0) {
+			put_task_struct(iter.task);
+			if (rc != -EMSGSIZE)
+				return rc;
+			break;
+		}
+	}
+
+	cb->args[0] = iter.tgid;
+
+	return skb->len;
+}
+
 int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 {
 	struct nlattr *nla = info->attrs[TASK_DIAG_CMD_ATTR_GET];

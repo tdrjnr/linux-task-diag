@@ -29,6 +29,8 @@ extern void taskstats_init_early(void);
 struct genl_info;
 struct sk_buff;
 int taskdiag_doit(struct sk_buff *skb, struct genl_info *info);
+struct netlink_callback;
+int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb);
 
 #else
 static inline void taskstats_exit(struct task_struct *tsk, int group_dead)
