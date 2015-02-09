@@ -102,6 +102,46 @@ err:
 	return err;
 }
 
+static int taskdiag_dumpid(struct sk_buff *skb, struct netlink_callback *cb)
+{
+	struct pid_namespace *ns = task_active_pid_ns(current);
+	struct tgid_iter iter;
+	struct nlattr *na;
+	struct task_diag_pid *req;
+	int rc;
+
+	if (nlmsg_len(cb->nlh) < GENL_HDRLEN + sizeof(*req))
+		return -EINVAL;
+
+	na = nlmsg_data(cb->nlh) + GENL_HDRLEN;
+	if (na->nla_type < 0)
+		return -EINVAL;
+
+	req = (struct task_diag_pid *) nla_data(na);
+
+	iter.tgid = cb->args[0];
+	iter.task = NULL;
+	for (iter = next_tgid(ns, iter);
+	     iter.task;
+	     iter.tgid += 1, iter = next_tgid(ns, iter)) {
+		if (!ptrace_may_access(iter.task, PTRACE_MODE_READ))
+			continue;
+
+		rc = task_diag_fill(iter.task, skb, req->show_flags,
+				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq);
+		if (rc < 0) {
+			put_task_struct(iter.task);
+			if (rc != -EMSGSIZE)
+				return rc;
+			break;
+		}
+	}
+
+	cb->args[0] = iter.tgid;
+
+	return skb->len;
+}
+
 static int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 {
 	struct task_struct *tsk = NULL;
@@ -161,6 +201,7 @@ static const struct genl_ops taskdiag_ops[] = {
 	{
 		.cmd		= TASKDIAG_CMD_GET,
 		.doit		= taskdiag_doit,
+		.dumpit		= taskdiag_dumpid,
 		.policy		= taskstats_cmd_get_policy,
 	},
 };
