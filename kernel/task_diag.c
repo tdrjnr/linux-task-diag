@@ -21,6 +21,9 @@ static size_t taskdiag_packet_size(u64 show_flags)
 	if (show_flags & TASK_DIAG_SHOW_BASE)
 		size += nla_total_size(sizeof(struct task_diag_base));
 
+	if (show_flags & TASK_DIAG_SHOW_CRED)
+		size += nla_total_size(sizeof(struct task_diag_creds));
+
 	return size;
 }
 
@@ -87,9 +90,52 @@ static int fill_task_base(struct task_struct *p, struct sk_buff *skb, struct pid
 	return 0;
 }
 
+static inline void caps2diag(struct task_diag_caps *diag, const kernel_cap_t *cap)
+{
+	int i;
+
+	for (i = 0; i < _LINUX_CAPABILITY_U32S_3; i++)
+		diag->cap[i] = cap->cap[i];
+}
+
+static int fill_creds(struct task_struct *p, struct sk_buff *skb,
+					struct user_namespace *user_ns)
+{
+	struct task_diag_creds *diag_cred;
+	const struct cred *cred;
+	struct nlattr *attr;
+
+	attr = nla_reserve(skb, TASK_DIAG_CRED, sizeof(struct task_diag_creds));
+	if (!attr)
+		return -EMSGSIZE;
+
+	diag_cred = nla_data(attr);
+
+	cred = get_task_cred(p);
+
+	caps2diag(&diag_cred->cap_inheritable, &cred->cap_inheritable);
+	caps2diag(&diag_cred->cap_permitted, &cred->cap_permitted);
+	caps2diag(&diag_cred->cap_effective, &cred->cap_effective);
+	caps2diag(&diag_cred->cap_bset, &cred->cap_bset);
+
+	diag_cred->uid   = from_kuid_munged(user_ns, cred->uid);
+	diag_cred->euid  = from_kuid_munged(user_ns, cred->euid);
+	diag_cred->suid  = from_kuid_munged(user_ns, cred->suid);
+	diag_cred->fsuid = from_kuid_munged(user_ns, cred->fsuid);
+	diag_cred->gid   = from_kgid_munged(user_ns, cred->gid);
+	diag_cred->egid  = from_kgid_munged(user_ns, cred->egid);
+	diag_cred->sgid  = from_kgid_munged(user_ns, cred->sgid);
+	diag_cred->fsgid = from_kgid_munged(user_ns, cred->fsgid);
+
+	put_cred(cred);
+
+	return 0;
+}
+
 static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
-				u64 show_flags, u32 portid, u32 seq,
-				struct task_diag_cb *cb, struct pid_namespace *pidns)
+			  u64 show_flags, u32 portid, u32 seq,
+			  struct task_diag_cb *cb, struct pid_namespace *pidns,
+			  struct user_namespace *userns)
 {
 	void *reply;
 	int err = 0, i = 0, n = 0;
@@ -114,6 +160,14 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	if (show_flags & TASK_DIAG_SHOW_BASE) {
 		if (i >= n)
 			err = fill_task_base(tsk, skb, pidns);
+		if (err)
+			goto err;
+		i++;
+	}
+
+	if (show_flags & TASK_DIAG_SHOW_CRED) {
+		if (i >= n)
+			err = fill_creds(tsk, skb, userns);
 		if (err)
 			goto err;
 		i++;
@@ -145,6 +199,7 @@ static bool task_diag_may_access(struct sk_buff *skb, struct task_struct *tsk)
 int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb->args;
+	struct user_namespace *userns;
 	struct pid_namespace *pidns;
 	struct tgid_iter iter;
 	struct nlattr *na;
@@ -167,6 +222,7 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 		return -EINVAL;
 
 	pidns  = ns_of_pid(NETLINK_CB(cb->skb).pid);
+	userns = NETLINK_CB(cb->skb).sk->sk_socket->file->f_cred->user_ns;
 
 	memcpy(&req, nla_data(na), sizeof(req));
 
@@ -180,7 +236,7 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 
 		rc = task_diag_fill(iter.task, skb, req.show_flags,
 				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq,
-				diag_cb, pidns);
+				diag_cb, pidns, userns);
 		if (rc < 0) {
 			put_task_struct(iter.task);
 			if (rc != -EMSGSIZE)
@@ -197,6 +253,7 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 {
 	struct nlattr *nla = info->attrs[TASK_DIAG_CMD_ATTR_GET];
+	struct user_namespace *userns;
 	struct pid_namespace *pidns;
 	struct task_struct *tsk = NULL;
 	struct task_diag_pid req;
@@ -234,6 +291,7 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 	}
 
 	pidns  = ns_of_pid(NETLINK_CB(skb).pid);
+	userns = NETLINK_CB(skb).sk->sk_socket->file->f_cred->user_ns;
 
 	size = taskdiag_packet_size(req.show_flags);
 
@@ -246,7 +304,7 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 
 		rc = task_diag_fill(tsk, msg, req.show_flags,
 					info->snd_portid, info->snd_seq, NULL,
-					pidns);
+					pidns, userns);
 		if (rc != -EMSGSIZE)
 			break;
 
