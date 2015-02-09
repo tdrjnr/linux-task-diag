@@ -691,6 +691,7 @@ static const struct genl_ops taskstats_ops[] = {
 	{
 		.cmd		= TASKDIAG_CMD_GET,
 		.doit		= taskdiag_doit,
+		.dumpit		= taskdiag_dumpit,
 		.policy		= taskdiag_cmd_get_policy,
 	},
 #endif
