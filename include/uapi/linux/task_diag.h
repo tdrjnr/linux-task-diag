@@ -7,6 +7,7 @@
 enum {
 	/* optional attributes which can be specified in show_flags */
 	TASK_DIAG_BASE	= 0,
+	TASK_DIAG_CRED,
 
 	/* other attributes */
 	TASK_DIAG_PID	= 64,	/* u32 */
@@ -16,6 +17,7 @@ enum {
 };
 
 #define TASK_DIAG_SHOW_BASE	(1ULL << TASK_DIAG_BASE)
+#define TASK_DIAG_SHOW_CRED	(1ULL << TASK_DIAG_CRED)
 
 enum {
 	TASK_DIAG_RUNNING,
@@ -38,6 +40,26 @@ struct task_diag_base {
 	__u32	pgid;
 	__u8	state;
 	char	comm[TASK_DIAG_COMM_LEN];
+};
+
+struct task_diag_caps {
+	__u32 cap[_LINUX_CAPABILITY_U32S_3];
+};
+
+struct task_diag_creds {
+	struct task_diag_caps cap_inheritable;
+	struct task_diag_caps cap_permitted;
+	struct task_diag_caps cap_effective;
+	struct task_diag_caps cap_bset;
+
+	__u32 uid;
+	__u32 euid;
+	__u32 suid;
+	__u32 fsuid;
+	__u32 gid;
+	__u32 egid;
+	__u32 sgid;
+	__u32 fsgid;
 };
 
 #define TASK_DIAG_DUMP_ALL	0
