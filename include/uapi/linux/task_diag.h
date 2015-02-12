@@ -63,6 +63,7 @@ struct task_diag_creds {
 };
 
 #define TASK_DIAG_DUMP_ALL	0
+#define TASK_DIAG_DUMP_CHILDREN	1
 
 struct task_diag_pid {
 	__u64	show_flags;
