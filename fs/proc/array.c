@@ -579,54 +579,26 @@ get_children_pid(struct inode *inode, struct pid *pid_prev, loff_t pos)
 {
 	struct task_struct *start, *task;
 	struct pid *pid = NULL;
+	struct child_iter iter;
 
-	read_lock(&tasklist_lock);
-
-	start = pid_task(proc_pid(inode), PIDTYPE_PID);
+	start = get_proc_task(inode);
 	if (!start)
-		goto out;
+		return NULL;
 
-	/*
-	 * Lets try to continue searching first, this gives
-	 * us significant speedup on children-rich processes.
-	 */
-	if (pid_prev) {
-		task = pid_task(pid_prev, PIDTYPE_PID);
-		if (task && task->real_parent == start &&
-		    !(list_empty(&task->sibling))) {
-			if (list_is_last(&task->sibling, &start->children))
-				goto out;
-			task = list_first_entry(&task->sibling,
-						struct task_struct, sibling);
-			pid = get_pid(task_pid(task));
-			goto out;
-		}
-	}
+	if (pid_prev)
+		task = get_pid_task(pid_prev, PIDTYPE_PID);
+	else
+		task = NULL;
 
-	/*
-	 * Slow search case.
-	 *
-	 * We might miss some children here if children
-	 * are exited while we were not holding the lock,
-	 * but it was never promised to be accurate that
-	 * much.
-	 *
-	 * "Just suppose that the parent sleeps, but N children
-	 *  exit after we printed their tids. Now the slow paths
-	 *  skips N extra children, we miss N tasks." (c)
-	 *
-	 * So one need to stop or freeze the leader and all
-	 * its children to get a precise result.
-	 */
-	list_for_each_entry(task, &start->children, sibling) {
-		if (pos-- == 0) {
-			pid = get_pid(task_pid(task));
-			break;
-		}
-	}
+	iter.parent = start;
+	iter.task = task;
+	iter.pos = pos;
 
-out:
-	read_unlock(&tasklist_lock);
+	iter = next_child(iter);
+
+	put_task_struct(start);
+	if (iter.task)
+		pid = get_pid(task_pid(iter.task));
 	return pid;
 }
 

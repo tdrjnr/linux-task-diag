@@ -89,4 +89,10 @@ struct tgid_iter {
 
 struct tgid_iter next_tgid(struct pid_namespace *ns, struct tgid_iter iter);
 
+struct child_iter {
+	struct task_struct      *task, *parent;
+	unsigned int		pos;
+};
+
+struct child_iter next_child(struct child_iter iter);
 #endif /* _LINUX_PROC_FS_H */

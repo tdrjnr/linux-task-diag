@@ -606,6 +606,61 @@ retry:
 	return iter;
 }
 
+struct child_iter next_child(struct child_iter iter)
+{
+	struct task_struct *task;
+	loff_t pos = iter.pos;
+
+	read_lock(&tasklist_lock);
+
+	/*
+	 * Lets try to continue searching first, this gives
+	 * us significant speedup on children-rich processes.
+	 */
+	if (iter.task) {
+		task = iter.task;
+		if (task && task->real_parent == iter.parent &&
+		    !(list_empty(&task->sibling))) {
+			if (list_is_last(&task->sibling, &iter.parent->children)) {
+				task = NULL;
+				goto out;
+			}
+			task = list_first_entry(&task->sibling,
+						struct task_struct, sibling);
+			goto out;
+		}
+	}
+
+	/*
+	 * Slow search case.
+	 *
+	 * We might miss some children here if children
+	 * are exited while we were not holding the lock,
+	 * but it was never promised to be accurate that
+	 * much.
+	 *
+	 * "Just suppose that the parent sleeps, but N children
+	 *  exit after we printed their tids. Now the slow paths
+	 *  skips N extra children, we miss N tasks." (c)
+	 *
+	 * So one need to stop or freeze the leader and all
+	 * its children to get a precise result.
+	 */
+	list_for_each_entry(task, &iter.parent->children, sibling) {
+		if (pos-- == 0)
+			goto out;
+	}
+	task = NULL;
+out:
+	if (iter.task)
+		put_task_struct(iter.task);
+	if (task)
+		get_task_struct(task);
+	iter.task = task;
+	read_unlock(&tasklist_lock);
+	return iter;
+}
+
 /*
  * The pid hash table is scaled according to the amount of memory in the
  * machine.  From a minimum of 16 slots up to 4096 slots at one gigabyte or
