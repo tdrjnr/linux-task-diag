@@ -9,6 +9,8 @@
 #include <net/sock.h>
 
 struct task_diag_cb {
+	pid_t	pid;
+	int	pos;
 	int	attr;
 };
 
@@ -189,6 +191,104 @@ err:
 	return err;
 }
 
+struct task_iter {
+	struct task_diag_pid req;
+	struct pid_namespace *ns;
+	struct task_diag_cb *cb;
+	struct task_struct *parent;
+
+	union {
+		struct tgid_iter tgid;
+		struct {
+			unsigned int		pos;
+			struct task_struct	*task;
+		};
+	};
+};
+
+static void iter_stop(struct task_iter *iter)
+{
+	struct task_struct *task;
+
+	if (iter->parent)
+		put_task_struct(iter->parent);
+
+	switch (iter->req.dump_strategy) {
+	case TASK_DIAG_DUMP_ALL:
+		task = iter->tgid.task;
+		break;
+	default:
+		task = iter->task;
+	}
+	if (task)
+		put_task_struct(task);
+}
+
+static struct task_struct *
+task_diag_next_child(struct task_struct *parent, struct task_struct *prev, unsigned int pos)
+{
+	struct task_struct *task;
+
+	read_lock(&tasklist_lock);
+	task = task_next_child(parent, prev, pos);
+	if (prev)
+		put_task_struct(prev);
+	if (task)
+		get_task_struct(task);
+	read_unlock(&tasklist_lock);
+
+	return task;
+}
+
+static struct task_struct *iter_start(struct task_iter *iter)
+{
+	if (iter->req.pid > 0) {
+		rcu_read_lock();
+		iter->parent = find_task_by_pid_ns(iter->req.pid, iter->ns);
+		if (iter->parent)
+			get_task_struct(iter->parent);
+		rcu_read_unlock();
+	}
+
+	switch (iter->req.dump_strategy) {
+	case TASK_DIAG_DUMP_CHILDREN:
+
+		if (iter->parent == NULL)
+			return ERR_PTR(-ESRCH);
+
+		iter->pos = iter->cb->pos;
+		iter->task = task_diag_next_child(iter->parent, NULL, iter->pos);
+		return iter->task;
+
+	case TASK_DIAG_DUMP_ALL:
+		iter->tgid.tgid = iter->cb->pid;
+		iter->tgid.task = NULL;
+		iter->tgid = next_tgid(iter->ns, iter->tgid);
+		return iter->tgid.task;
+	}
+
+	return ERR_PTR(-EINVAL);
+}
+
+static struct task_struct *iter_next(struct task_iter *iter)
+{
+	switch (iter->req.dump_strategy) {
+	case TASK_DIAG_DUMP_CHILDREN:
+		iter->pos++;
+		iter->task = task_diag_next_child(iter->parent, iter->task, iter->pos);
+		iter->cb->pos = iter->pos;
+		return iter->task;
+
+	case TASK_DIAG_DUMP_ALL:
+		iter->tgid.tgid += 1;
+		iter->tgid = next_tgid(iter->ns, iter->tgid);
+		iter->cb->pid = iter->tgid.tgid;
+		return iter->tgid.task;
+	}
+
+	return NULL;
+}
+
 static bool task_diag_may_access(struct sk_buff *skb, struct task_struct *tsk)
 {
 	const struct cred *cred = NETLINK_CB(skb).sk->sk_socket->file->f_cred;
@@ -201,9 +301,9 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb->args;
 	struct user_namespace *userns;
 	struct pid_namespace *pidns;
-	struct tgid_iter iter;
+	struct task_iter iter;
 	struct nlattr *na;
-	struct task_diag_pid req;
+	struct task_struct *task;
 	int rc;
 
 	BUILD_BUG_ON(sizeof(struct task_diag_cb) > sizeof(cb->args));
@@ -211,7 +311,7 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 	if (NETLINK_CB(cb->skb).pid == NULL)
 		return -EINVAL;
 
-	if (nlmsg_len(cb->nlh) < GENL_HDRLEN + sizeof(req))
+	if (nlmsg_len(cb->nlh) < GENL_HDRLEN + sizeof(iter.req))
 		return -EINVAL;
 
 	if (NETLINK_CB(cb->skb).pid == NULL)
@@ -224,28 +324,31 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 	pidns  = ns_of_pid(NETLINK_CB(cb->skb).pid);
 	userns = NETLINK_CB(cb->skb).sk->sk_socket->file->f_cred->user_ns;
 
-	memcpy(&req, nla_data(na), sizeof(req));
+	memcpy(&iter.req, nla_data(na), sizeof(iter.req));
 
-	iter.tgid = cb->args[0];
-	iter.task = NULL;
-	for (iter = next_tgid(pidns, iter);
-	     iter.task;
-	     iter.tgid += 1, iter = next_tgid(pidns, iter)) {
-		if (!task_diag_may_access(cb->skb, iter.task))
+	iter.ns     = pidns;
+	iter.cb     = diag_cb;
+	iter.parent = NULL;
+
+	task = iter_start(&iter);
+	if (IS_ERR(task))
+		return PTR_ERR(task);
+
+	for (; task; task = iter_next(&iter)) {
+		if (!task_diag_may_access(cb->skb, task))
 			continue;
-
-		rc = task_diag_fill(iter.task, skb, req.show_flags,
+		rc = task_diag_fill(task, skb, iter.req.show_flags,
 				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq,
 				diag_cb, pidns, userns);
 		if (rc < 0) {
-			put_task_struct(iter.task);
-			if (rc != -EMSGSIZE)
+			if (rc != -EMSGSIZE) {
+				iter_stop(&iter);
 				return rc;
+			}
 			break;
 		}
 	}
-
-	cb->args[0] = iter.tgid;
+	iter_stop(&iter);
 
 	return skb->len;
 }
