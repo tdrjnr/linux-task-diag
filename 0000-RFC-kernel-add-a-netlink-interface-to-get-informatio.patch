@@ -1,0 +1,150 @@
+From 29e6df3db77234a44a680344a61eb5bd735f6d8e Mon Sep 17 00:00:00 2001
+From: Andrey Vagin <avagin@openvz.org>
+Date: Mon, 16 Feb 2015 19:20:52 +0300
+Subject: [PATCH 0/7] [RFC] kernel: add a netlink interface to get information
+ about tasks
+
+Here is a preview version. It provides restricted set of functionality.
+I would like to collect feedback about this idea.
+
+Currently we use the proc file system, where all information are
+presented in text files, what is convenient for humans.  But if we need
+to get information about processes from code (e.g. in C), the procfs
+doesn't look so cool.
+
+From code we would prefer to get information in binary format and to be
+able to specify which information and for which tasks are required. Here
+is a new interface with all these features, which is called task_diag.
+In addition it's much faster than procfs.
+
+task_diag is based on netlink sockets and looks like socket-diag, which
+is used to get information about sockets.
+
+A request is described by the task_diag_pid structure:
+
+struct task_diag_pid {
+       __u64   show_flags;	/* specify which information are required */
+       __u64   dump_stratagy;   /* specify a group of processes */
+
+       __u32   pid;
+};
+
+A respone is a set of netlink messages. Each message describes one task.
+All task properties are divided on groups. A message contains the
+TASK_DIAG_MSG group and other groups if they have been requested in
+show_flags. For example, if show_flags contains TASK_DIAG_SHOW_CRED, a
+response will contain the TASK_DIAG_CRED group which is described by the
+task_diag_creds structure.
+
+struct task_diag_msg {
+	__u32	tgid;
+	__u32	pid;
+	__u32	ppid;
+	__u32	tpid;
+	__u32	sid;
+	__u32	pgid;
+	__u8	state;
+	char	comm[TASK_DIAG_COMM_LEN];
+};
+
+Another good feature of task_diag is an ability to request information
+for a few processes. Currently here are two stratgies
+TASK_DIAG_DUMP_ALL	- get information for all tasks
+TASK_DIAG_DUMP_CHILDREN	- get information for children of a specified
+			  tasks
+
+The task diag is much faster than the proc file system. We don't need to
+create a new file descriptor for each task. We need to send a request
+and get a response. It allows to get information for a few task in one
+request-response iteration.
+
+I have compared performance of procfs and task-diag for the
+"ps ax -o pid,ppid" command.
+
+A test stand contains 10348 processes.
+$ ps ax -o pid,ppid | wc -l
+10348
+
+$ time ps ax -o pid,ppid > /dev/null
+
+real	0m1.073s
+user	0m0.086s
+sys	0m0.903s
+
+$ time ./task_diag_all > /dev/null
+
+real	0m0.037s
+user	0m0.004s
+sys	0m0.020s
+
+And here are statistics about syscalls which were called by each
+command.
+$ perf stat -e syscalls:sys_exit* -- ps ax -o pid,ppid  2>&1 | grep syscalls | sort -n -r | head -n 5
+            20,713      syscalls:sys_exit_open
+            20,710      syscalls:sys_exit_close
+            20,708      syscalls:sys_exit_read
+            10,348      syscalls:sys_exit_newstat
+                31      syscalls:sys_exit_write
+
+$ perf stat -e syscalls:sys_exit* -- ./task_diag_all  2>&1 | grep syscalls | sort -n -r | head -n 5
+               114      syscalls:sys_exit_recvfrom
+                49      syscalls:sys_exit_write
+                 8      syscalls:sys_exit_mmap
+                 4      syscalls:sys_exit_mprotect
+                 3      syscalls:sys_exit_newfstat
+
+You can find the test program from this experiment in the last patch.
+
+The idea of this functionality was suggested by Pavel Emelyanov
+(xemul@), when he found that operations with /proc forms a significant
+part of a checkpointing time.
+
+Ten years ago here was attempt to add a netlink interface to access to /proc
+information:
+http://lwn.net/Articles/99600/
+
+Signed-off-by: Andrey Vagin <avagin@openvz.org>
+
+git repo: https://github.com/avagin/linux-task-diag
+
+Andrey Vagin (7):
+  [RFC] kernel: add a netlink interface to get information about tasks
+  kernel: move next_tgid from fs/proc
+  task-diag: add ability to get information about all tasks
+  task-diag: add a new group to get process credentials
+  kernel: add ability to iterate children of a specified task
+  task_diag: add ability to dump children
+  selftest: check the task_diag functinonality
+
+ fs/proc/array.c                                    |  58 +---
+ fs/proc/base.c                                     |  43 ---
+ include/linux/proc_fs.h                            |  13 +
+ include/uapi/linux/taskdiag.h                      |  89 ++++++
+ init/Kconfig                                       |  12 +
+ kernel/Makefile                                    |   1 +
+ kernel/pid.c                                       |  94 ++++++
+ kernel/taskdiag.c                                  | 343 +++++++++++++++++++++
+ tools/testing/selftests/task_diag/Makefile         |  16 +
+ tools/testing/selftests/task_diag/task_diag.c      |  59 ++++
+ tools/testing/selftests/task_diag/task_diag_all.c  |  82 +++++
+ tools/testing/selftests/task_diag/task_diag_comm.c | 195 ++++++++++++
+ tools/testing/selftests/task_diag/task_diag_comm.h |  47 +++
+ tools/testing/selftests/task_diag/taskdiag.h       |   1 +
+ 14 files changed, 967 insertions(+), 86 deletions(-)
+ create mode 100644 include/uapi/linux/taskdiag.h
+ create mode 100644 kernel/taskdiag.c
+ create mode 100644 tools/testing/selftests/task_diag/Makefile
+ create mode 100644 tools/testing/selftests/task_diag/task_diag.c
+ create mode 100644 tools/testing/selftests/task_diag/task_diag_all.c
+ create mode 100644 tools/testing/selftests/task_diag/task_diag_comm.c
+ create mode 100644 tools/testing/selftests/task_diag/task_diag_comm.h
+ create mode 120000 tools/testing/selftests/task_diag/taskdiag.h
+
+Cc: Oleg Nesterov <oleg@redhat.com>
+Cc: Andrew Morton <akpm@linux-foundation.org>
+Cc: Cyrill Gorcunov <gorcunov@openvz.org>
+Cc: Pavel Emelyanov <xemul@parallels.com>
+Cc: Roger Luethi <rl@hellgate.ch>
+-- 
+2.1.0
+
