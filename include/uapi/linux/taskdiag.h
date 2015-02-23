@@ -8,6 +8,7 @@ enum {
 	/* optional attributes which can be specified in show_flags */
 	TASK_DIAG_MSG	= 0,
 	TASK_DIAG_CRED,
+	TASK_DIAG_STAT,
 
 	/* other attributes */
 	TASK_DIAG_PID	= 64,
@@ -15,6 +16,7 @@ enum {
 
 #define TASK_DIAG_SHOW_MSG	(1ULL << TASK_DIAG_MSG)
 #define TASK_DIAG_SHOW_CRED	(1ULL << TASK_DIAG_CRED)
+#define TASK_DIAG_SHOW_STAT	(1ULL << TASK_DIAG_STAT)
 
 enum {
 	TASK_DIAG_RUNNING,
