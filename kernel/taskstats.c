@@ -192,7 +192,7 @@ static void fill_stats(struct user_namespace *user_ns,
 	xacct_add_tsk(stats, tsk);
 }
 
-static int fill_stats_for_pid(pid_t pid, struct taskstats *stats)
+int fill_stats_for_pid(pid_t pid, struct taskstats *stats)
 {
 	struct task_struct *tsk;
 

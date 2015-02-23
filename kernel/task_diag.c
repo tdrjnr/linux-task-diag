@@ -6,6 +6,7 @@
 #include <linux/ptrace.h>
 #include <linux/proc_fs.h>
 #include <linux/sched.h>
+#include <linux/taskstats.h>
 #include <net/sock.h>
 
 struct task_diag_cb {
@@ -25,6 +26,9 @@ static size_t taskdiag_packet_size(u64 show_flags)
 
 	if (show_flags & TASK_DIAG_SHOW_CRED)
 		size += nla_total_size(sizeof(struct task_diag_creds));
+
+	if (show_flags & TASK_DIAG_SHOW_STAT)
+		size += nla_total_size(sizeof(struct taskstats));
 
 	return size;
 }
@@ -100,6 +104,24 @@ static inline void caps2diag(struct task_diag_caps *diag, const kernel_cap_t *ca
 		diag->cap[i] = cap->cap[i];
 }
 
+static int fill_stats(struct task_struct *tsk, struct sk_buff *skb)
+{
+	struct taskstats *diag_stats;
+	struct nlattr *attr;
+	int ret;
+
+	attr = nla_reserve(skb, TASK_DIAG_STAT, sizeof(struct taskstats));
+	if (!attr)
+		return -EMSGSIZE;
+
+	diag_stats = nla_data(attr);
+
+	ret = fill_stats_for_pid(task_pid_vnr(tsk), diag_stats);
+	if (ret)
+		return ret;
+	return 0;
+}
+
 static int fill_creds(struct task_struct *p, struct sk_buff *skb,
 					struct user_namespace *user_ns)
 {
@@ -170,6 +192,14 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	if (show_flags & TASK_DIAG_SHOW_CRED) {
 		if (i >= n)
 			err = fill_creds(tsk, skb, userns);
+		if (err)
+			goto err;
+		i++;
+	}
+
+	if (show_flags & TASK_DIAG_SHOW_STAT) {
+		if (i >= n)
+			err = fill_stats(tsk, skb);
 		if (err)
 			goto err;
 		i++;
