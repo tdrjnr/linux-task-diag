@@ -13,9 +13,14 @@ struct task_diag_cb {
 	pid_t	pid;
 	int	pos;
 	int	attr;
+	union { /* per-attribute */
+		struct {
+			unsigned long mark;
+		} vma;
+	};
 };
 
-static size_t taskdiag_packet_size(u64 show_flags)
+static size_t taskdiag_packet_size(u64 show_flags, int n_vma)
 {
 	size_t size;
 
@@ -29,6 +34,14 @@ static size_t taskdiag_packet_size(u64 show_flags)
 
 	if (show_flags & TASK_DIAG_SHOW_STAT)
 		size += nla_total_size(sizeof(struct taskstats));
+
+	if (show_flags & TASK_DIAG_SHOW_VMA && n_vma > 0) {
+		/*
+		 * 128 is a schwag on average path length for maps; used to
+		 * ballpark initial memory allocation for genl msg
+		 */
+		size += nla_total_size(sizeof(struct task_diag_vma) * n_vma + 128);
+	}
 
 	return size;
 }
@@ -156,6 +169,238 @@ static int fill_creds(struct task_struct *p, struct sk_buff *skb,
 	return 0;
 }
 
+static u64 get_vma_flags(struct vm_area_struct *vma)
+{
+	u64 flags = 0;
+
+	static const u64 mnemonics[BITS_PER_LONG] = {
+		/*
+		 * In case if we meet a flag we don't know about.
+		 */
+		[0 ... (BITS_PER_LONG-1)] = 0,
+
+		[ilog2(VM_READ)]	= TASK_DIAG_VMA_F_READ,
+		[ilog2(VM_WRITE)]	= TASK_DIAG_VMA_F_WRITE,
+		[ilog2(VM_EXEC)]	= TASK_DIAG_VMA_F_EXEC,
+		[ilog2(VM_SHARED)]	= TASK_DIAG_VMA_F_SHARED,
+		[ilog2(VM_MAYREAD)]	= TASK_DIAG_VMA_F_MAYREAD,
+		[ilog2(VM_MAYWRITE)]	= TASK_DIAG_VMA_F_MAYWRITE,
+		[ilog2(VM_MAYEXEC)]	= TASK_DIAG_VMA_F_MAYEXEC,
+		[ilog2(VM_MAYSHARE)]	= TASK_DIAG_VMA_F_MAYSHARE,
+		[ilog2(VM_GROWSDOWN)]	= TASK_DIAG_VMA_F_GROWSDOWN,
+		[ilog2(VM_PFNMAP)]	= TASK_DIAG_VMA_F_PFNMAP,
+		[ilog2(VM_DENYWRITE)]	= TASK_DIAG_VMA_F_DENYWRITE,
+#ifdef CONFIG_X86_INTEL_MPX
+		[ilog2(VM_MPX)]		= TASK_DIAG_VMA_F_MPX,
+#endif
+		[ilog2(VM_LOCKED)]	= TASK_DIAG_VMA_F_LOCKED,
+		[ilog2(VM_IO)]		= TASK_DIAG_VMA_F_IO,
+		[ilog2(VM_SEQ_READ)]	= TASK_DIAG_VMA_F_SEQ_READ,
+		[ilog2(VM_RAND_READ)]	= TASK_DIAG_VMA_F_RAND_READ,
+		[ilog2(VM_DONTCOPY)]	= TASK_DIAG_VMA_F_DONTCOPY,
+		[ilog2(VM_DONTEXPAND)]	= TASK_DIAG_VMA_F_DONTEXPAND,
+		[ilog2(VM_ACCOUNT)]	= TASK_DIAG_VMA_F_ACCOUNT,
+		[ilog2(VM_NORESERVE)]	= TASK_DIAG_VMA_F_NORESERVE,
+		[ilog2(VM_HUGETLB)]	= TASK_DIAG_VMA_F_HUGETLB,
+		[ilog2(VM_ARCH_1)]	= TASK_DIAG_VMA_F_ARCH_1,
+		[ilog2(VM_DONTDUMP)]	= TASK_DIAG_VMA_F_DONTDUMP,
+#ifdef CONFIG_MEM_SOFT_DIRTY
+		[ilog2(VM_SOFTDIRTY)]	= TASK_DIAG_VMA_F_SOFTDIRTY,
+#endif
+		[ilog2(VM_MIXEDMAP)]	= TASK_DIAG_VMA_F_MIXEDMAP,
+		[ilog2(VM_HUGEPAGE)]	= TASK_DIAG_VMA_F_HUGEPAGE,
+		[ilog2(VM_NOHUGEPAGE)]	= TASK_DIAG_VMA_F_NOHUGEPAGE,
+		[ilog2(VM_MERGEABLE)]	= TASK_DIAG_VMA_F_MERGEABLE,
+	};
+	size_t i;
+
+	for (i = 0; i < BITS_PER_LONG; i++) {
+		if (vma->vm_flags & (1UL << i))
+			flags |= mnemonics[i];
+	}
+
+	return flags;
+}
+
+static int task_vma_num(struct mm_struct *mm)
+{
+	struct vm_area_struct *vma;
+	int n_vma = 0;
+
+	if (!mm || !atomic_inc_not_zero(&mm->mm_users))
+		return 0;
+
+	down_read(&mm->mmap_sem);
+	for (vma = mm->mmap; vma; vma = vma->vm_next, n_vma++)
+		;
+
+	up_read(&mm->mmap_sem);
+	mmput(mm);
+
+	return n_vma;
+}
+
+/*
+ * use a tmp variable and copy to input arg to deal with
+ * alignment issues. diag_vma contains u64 elements which
+ * means extended load operations can be used and those can
+ * require 8-byte alignment (e.g., sparc)
+ */
+static void fill_diag_vma(struct vm_area_struct *vma,
+			  struct task_diag_vma *diag_vma)
+{
+	struct task_diag_vma tmp;
+
+	/* We don't show the stack guard page in /proc/maps */
+	tmp.start = vma->vm_start;
+	if (stack_guard_page_start(vma, tmp.start))
+		tmp.start += PAGE_SIZE;
+
+	tmp.end = vma->vm_end;
+	if (stack_guard_page_end(vma, tmp.end))
+		tmp.end -= PAGE_SIZE;
+	tmp.vm_flags = get_vma_flags(vma);
+
+	if (vma->vm_file) {
+		struct inode *inode = file_inode(vma->vm_file);
+		dev_t dev;
+
+		dev = inode->i_sb->s_dev;
+		tmp.major = MAJOR(dev);
+		tmp.minor = MINOR(dev);
+		tmp.inode = inode->i_ino;
+		tmp.generation = inode->i_generation;
+		tmp.pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+	} else {
+		tmp.major = 0;
+		tmp.minor = 0;
+		tmp.inode = 0;
+		tmp.generation = 0;
+		tmp.pgoff = 0;
+	}
+
+	memcpy(diag_vma, &tmp, sizeof(*diag_vma));
+}
+
+static const char *get_vma_name(struct vm_area_struct *vma, char *page)
+{
+	const char *name = NULL;
+
+	if (vma->vm_file) {
+		name = d_path(&vma->vm_file->f_path, page, PAGE_SIZE);
+		goto out;
+	}
+
+	if (vma->vm_ops && vma->vm_ops->name) {
+		name = vma->vm_ops->name(vma);
+		if (name)
+			goto out;
+	}
+
+	name = arch_vma_name(vma);
+
+out:
+	return name;
+}
+
+static int fill_vma(struct task_struct *p, struct sk_buff *skb,
+			struct task_diag_cb *cb, bool *progress)
+{
+	struct vm_area_struct *vma;
+	struct mm_struct *mm;
+	struct nlattr *attr = NULL;
+	struct task_diag_vma *diag_vma;
+	unsigned long mark = 0;
+	char *page;
+	int i, rc = -EMSGSIZE;
+
+	if (cb)
+		mark = cb->vma.mark;
+
+	mm = p->mm;
+	if (!mm || !atomic_inc_not_zero(&mm->mm_users))
+		return 0;
+
+	page = (char *)__get_free_page(GFP_TEMPORARY);
+	if (!page) {
+		mmput(mm);
+		return -ENOMEM;
+	}
+
+	down_read(&mm->mmap_sem);
+	for (vma = mm->mmap; vma; vma = vma->vm_next, i++) {
+		unsigned char *b = skb_tail_pointer(skb);
+		const char *name;
+		void *pfile;
+
+
+		if (mark >= vma->vm_start)
+			continue;
+
+		/* setup pointer for next map */
+		if (attr == NULL) {
+			attr = nla_reserve(skb, TASK_DIAG_VMA, sizeof(*diag_vma));
+			if (!attr)
+				goto err;
+
+			diag_vma = nla_data(attr);
+		} else {
+			diag_vma = nla_reserve_nohdr(skb, sizeof(*diag_vma));
+
+			if (diag_vma == NULL) {
+				nlmsg_trim(skb, b);
+				goto out;
+			}
+		}
+
+		fill_diag_vma(vma, diag_vma);
+
+		name = get_vma_name(vma, page);
+		if (IS_ERR(name)) {
+			nlmsg_trim(skb, b);
+			rc = PTR_ERR(name);
+			goto out;
+		}
+
+		if (name) {
+			diag_vma->name_len = strlen(name) + 1;
+
+			/* reserves NLA_ALIGN(len) */
+			pfile = nla_reserve_nohdr(skb, diag_vma->name_len);
+			if (pfile == NULL) {
+				nlmsg_trim(skb, b);
+				goto out;
+			}
+			diag_vma->name_off = pfile - (void *) diag_vma;
+			memcpy(pfile, name, diag_vma->name_len);
+		} else {
+			diag_vma->name_len = 0;
+			diag_vma->name_off = 0;
+		}
+
+		mark = vma->vm_start;
+
+		diag_vma->vma_len = skb_tail_pointer(skb) - (unsigned char *) diag_vma;
+
+		*progress = true;
+	}
+
+	rc = 0;
+	mark = 0;
+out:
+	if (*progress)
+		attr->nla_len = skb_tail_pointer(skb) - (unsigned char *) attr;
+
+err:
+	up_read(&mm->mmap_sem);
+	mmput(mm);
+	free_page((unsigned long) page);
+	if (cb)
+		cb->vma.mark = mark;
+
+	return rc;
+}
+
 static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 			  u64 show_flags, u32 portid, u32 seq,
 			  struct task_diag_cb *cb, struct pid_namespace *pidns,
@@ -163,6 +408,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 {
 	void *reply;
 	int err = 0, i = 0, n = 0;
+	bool progress = false;
 	int flags = 0;
 	u32 pid;
 
@@ -205,13 +451,21 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 		i++;
 	}
 
+	if (show_flags & TASK_DIAG_SHOW_VMA) {
+		if (i >= n)
+			err = fill_vma(tsk, skb, cb, &progress);
+		if (err)
+			goto err;
+		i++;
+	}
+
 	genlmsg_end(skb, reply);
 	if (cb)
 		cb->attr = 0;
 
 	return 0;
 err:
-	if (err == -EMSGSIZE && i != 0) {
+	if (err == -EMSGSIZE && (i > n || progress)) {
 		if (cb)
 			cb->attr = i;
 		genlmsg_end(skb, reply);
@@ -426,7 +680,7 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 	pidns  = ns_of_pid(NETLINK_CB(skb).pid);
 	userns = NETLINK_CB(skb).sk->sk_socket->file->f_cred->user_ns;
 
-	size = taskdiag_packet_size(req.show_flags);
+	size = taskdiag_packet_size(req.show_flags, task_vma_num(tsk->mm));
 
 	while (1) {
 		msg = genlmsg_new(size, GFP_KERNEL);
