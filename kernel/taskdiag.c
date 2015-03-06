@@ -150,12 +150,189 @@ static int fill_creds(struct task_struct *p, struct sk_buff *skb)
 	return 0;
 }
 
+static u64 get_vma_flags(struct vm_area_struct *vma)
+{
+	u64 flags = 0;
+#define VM_TO_DIAG(flag) [ilog2(VM_##flag)] = TASK_DIAG_VMA_F_##flag,
+
+	static const u64 mnemonics[BITS_PER_LONG] = {
+		/*
+		 * In case if we meet a flag we don't know about.
+		 */
+		[0 ... (BITS_PER_LONG-1)] = 0,
+
+		VM_TO_DIAG(READ)
+		VM_TO_DIAG(WRITE)
+		VM_TO_DIAG(EXEC)
+		VM_TO_DIAG(SHARED)
+		VM_TO_DIAG(MAYREAD)
+		VM_TO_DIAG(MAYWRITE)
+		VM_TO_DIAG(MAYEXEC)
+		VM_TO_DIAG(MAYSHARE)
+		VM_TO_DIAG(GROWSDOWN)
+		VM_TO_DIAG(PFNMAP)
+		VM_TO_DIAG(DENYWRITE)
+#ifdef CONFIG_X86_INTEL_MPX
+		VM_TO_DIAG(MPX)
+#endif
+		VM_TO_DIAG(LOCKED)
+		VM_TO_DIAG(IO)
+		VM_TO_DIAG(SEQ_READ)
+		VM_TO_DIAG(RAND_READ)
+		VM_TO_DIAG(DONTCOPY)
+		VM_TO_DIAG(DONTEXPAND)
+		VM_TO_DIAG(ACCOUNT)
+		VM_TO_DIAG(NORESERVE)
+		VM_TO_DIAG(HUGETLB)
+		VM_TO_DIAG(ARCH_1)
+		VM_TO_DIAG(DONTDUMP)
+#ifdef CONFIG_MEM_SOFT_DIRTY
+		VM_TO_DIAG(SOFTDIRTY)
+#endif
+		VM_TO_DIAG(MIXEDMAP)
+		VM_TO_DIAG(HUGEPAGE)
+		VM_TO_DIAG(NOHUGEPAGE)
+		VM_TO_DIAG(MERGEABLE)
+	};
+	size_t i;
+
+	for (i = 0; i < BITS_PER_LONG; i++) {
+		if (vma->vm_flags & (1UL << i))
+			flags |= mnemonics[i];
+	}
+
+	return flags;
+}
+
+static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_callback *cb, bool *progress)
+{
+	struct vm_area_struct *vma;
+	struct mm_struct *mm;
+	struct nlattr *attr;
+	unsigned long mark = 0;
+	char *page;
+	int i, rc;
+
+	if (cb)
+		mark = cb->args[2];
+
+	mm = p->mm;
+	if (!mm || !atomic_inc_not_zero(&mm->mm_users))
+		return 0;
+
+	page = (char *)__get_free_page(GFP_TEMPORARY);
+	if (!page) {
+		mmput(mm);
+		return -ENOMEM;
+	}
+
+	down_read(&mm->mmap_sem);
+	for (vma = mm->mmap; vma; vma = vma->vm_next, i++) {
+		struct task_diag_vma *diag_vma;
+		unsigned char *b = skb_tail_pointer(skb);
+		unsigned long start, end;
+		const char *name = NULL;
+
+		if (mark > vma->vm_start)
+			continue;
+
+		mark = vma->vm_start;
+
+		attr = nla_reserve(skb, TASK_DIAG_VMA, sizeof(struct task_diag_vma));
+		if (!attr) {
+			rc = -EMSGSIZE;
+			goto err;
+		}
+
+		diag_vma = nla_data(attr);
+
+		/* We don't show the stack guard page in /proc/maps */
+		start = vma->vm_start;
+		if (stack_guard_page_start(vma, start))
+			start += PAGE_SIZE;
+		end = vma->vm_end;
+		if (stack_guard_page_end(vma, end))
+			end -= PAGE_SIZE;
+
+		diag_vma->start	   = start;
+		diag_vma->end	   = end;
+		diag_vma->vm_flags = get_vma_flags(vma);
+		diag_vma->pgoff    = 0;
+
+		if (vma->vm_file) {
+			struct inode *inode = file_inode(vma->vm_file);
+			dev_t dev;
+			char *p;
+
+			dev = inode->i_sb->s_dev;
+			diag_vma->major = MAJOR(dev);
+			diag_vma->minor = MINOR(dev);
+			diag_vma->inode = inode->i_ino;
+			diag_vma->pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+
+			p = d_path(&vma->vm_file->f_path, page, PAGE_SIZE);
+			if (IS_ERR(p)) {
+				nlmsg_trim(skb, b);
+				rc = PTR_ERR(p);
+				goto err;
+			}
+			name = p;
+			goto done;
+		} else {
+			diag_vma->major = 0;
+			diag_vma->minor = 0;
+			diag_vma->inode = 0;
+			diag_vma->pgoff = 0;
+		}
+
+		if (vma->vm_ops && vma->vm_ops->name) {
+			name = vma->vm_ops->name(vma);
+			if (name)
+				goto done;
+		}
+
+		name = arch_vma_name(vma);
+done:
+		if (name) {
+			int len;
+
+			len = strlen(name) + 1;
+			attr = nla_reserve(skb, TASK_DIAG_VMA_NAME, len);
+			if (!attr) {
+				nlmsg_trim(skb, b);
+				rc = -EMSGSIZE;
+				goto err;
+			}
+
+			memcpy(nla_data(attr), name, len);
+		}
+		*progress = true;
+	}
+
+	up_read(&mm->mmap_sem);
+	mmput(mm);
+	free_page((unsigned long) page);
+	if (cb)
+		cb->args[2] = 0;
+	return 0;
+
+err:
+	up_read(&mm->mmap_sem);
+	mmput(mm);
+	free_page((unsigned long) page);
+	if (cb)
+		cb->args[2] = mark;
+
+	return rc;
+}
+
 static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 				u64 show_flags, u32 portid, u32 seq,
 				struct netlink_callback *cb)
 {
 	void *reply;
 	int err = 0, i = 0, n = 0;
+	bool progress = false;
 	pid_t pid;
 
 	if (cb)
@@ -194,13 +371,21 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 		i++;
 	}
 
+	if (show_flags & TASK_DIAG_SHOW_VMA) {
+		if (i >= n)
+			err = fill_vma(tsk, skb, cb, &progress);
+		if (err)
+			goto err;
+		i++;
+	}
+
 	genlmsg_end(skb, reply);
 	if (cb)
 		cb->args[1] = 0;
 
 	return 0;
 err:
-	if (err == -EMSGSIZE && i != 0) {
+	if (err == -EMSGSIZE && (i > n || progress)) {
 		if (cb)
 			cb->args[1] = i;
 		genlmsg_end(skb, reply);
