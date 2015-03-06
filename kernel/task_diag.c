@@ -84,13 +84,21 @@ static int fill_task_base(struct task_struct *p, struct sk_buff *skb)
 }
 
 static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
-				u64 show_flags, u32 portid, u32 seq)
+				u64 show_flags, u32 portid, u32 seq,
+				struct netlink_callback *cb)
 {
 	void *reply;
-	int err;
+	int err = 0, i = 0, n = 0;
+	int flags = 0;
 	u32 pid;
 
-	reply = genlmsg_put(skb, portid, seq, &taskstats_family, 0, TASK_DIAG_CMD_GET);
+	if (cb) {
+		n = cb->args[2];
+		flags |= NLM_F_MULTI;
+	}
+
+	reply = genlmsg_put(skb, portid, seq, &taskstats_family,
+					flags, TASK_DIAG_CMD_GET);
 	if (reply == NULL)
 		return -EMSGSIZE;
 
@@ -100,15 +108,26 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 		goto err;
 
 	if (show_flags & TASK_DIAG_SHOW_BASE) {
-		err = fill_task_base(tsk, skb);
+		if (i >= n)
+			err = fill_task_base(tsk, skb);
 		if (err)
 			goto err;
+		i++;
 	}
 
 	genlmsg_end(skb, reply);
+	if (cb)
+		cb->args[2] = 0;
+
 	return 0;
 err:
-	genlmsg_cancel(skb, reply);
+	if (err == -EMSGSIZE && i != 0) {
+		if (cb)
+			cb->args[2] = i;
+		genlmsg_end(skb, reply);
+	} else
+		genlmsg_cancel(skb, reply);
+
 	return err;
 }
 
@@ -138,7 +157,7 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 			continue;
 
 		rc = task_diag_fill(iter.task, skb, req.show_flags,
-				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq);
+				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq, cb);
 		if (rc < 0) {
 			put_task_struct(iter.task);
 			if (rc != -EMSGSIZE)
@@ -157,7 +176,7 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 	struct nlattr *nla = info->attrs[TASK_DIAG_CMD_ATTR_GET];
 	struct task_struct *tsk = NULL;
 	struct task_diag_pid req;
-	struct sk_buff *msg;
+	struct sk_buff *msg = NULL;
 	size_t size;
 	int rc;
 
@@ -174,35 +193,42 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 	 */
 	memcpy(&req, nla_data(nla), sizeof(req));
 
-	size = taskdiag_packet_size(req.show_flags);
-	msg = genlmsg_new(size, GFP_KERNEL);
-	if (!msg)
-		return -ENOMEM;
-
 	rcu_read_lock();
 	tsk = find_task_by_vpid(req.pid);
 	if (tsk)
 		get_task_struct(tsk);
 	rcu_read_unlock();
-	if (!tsk) {
-		rc = -ESRCH;
-		goto err;
-	};
+	if (!tsk)
+		return -ESRCH;
 
 	if (!ptrace_may_access(tsk, PTRACE_MODE_READ)) {
 		put_task_struct(tsk);
-		rc = -EPERM;
-		goto err;
+		return -EPERM;
 	}
 
-	rc = task_diag_fill(tsk, msg, req.show_flags,
-				info->snd_portid, info->snd_seq);
+	size = taskdiag_packet_size(req.show_flags);
+
+	while (1) {
+		msg = genlmsg_new(size, GFP_KERNEL);
+		if (!msg) {
+			put_task_struct(tsk);
+			return -EMSGSIZE;
+		}
+
+		rc = task_diag_fill(tsk, msg, req.show_flags,
+					info->snd_portid, info->snd_seq, NULL);
+		if (rc != -EMSGSIZE)
+			break;
+
+		nlmsg_free(msg);
+		size += 128;
+	}
+
 	put_task_struct(tsk);
-	if (rc < 0)
-		goto err;
+	if (rc < 0) {
+		nlmsg_free(msg);
+		return rc;
+	}
 
 	return genlmsg_reply(msg, info);
-err:
-	nlmsg_free(msg);
-	return rc;
 }
