@@ -1,0 +1,35 @@
+Taskdiag is a netlink interface for getting task properties. Compared to procfs,
+it is faster, more flexible and provides data in a binary format. Taskdiag was
+created using the basic idea with (in the image and likeness of) netdiag.
+
+Interface
+---------
+
+The user-kernel interface is encapsulated in include/linux/taskstats.h
+
+Request
+-------
+
+A request is described by the task_diag_pid structure.
+
+struct task_diag_pid {
+	__u64	show_flags;	/* TASK_DIAG_SHOW_* */
+	__u64	dump_stratagy;	/**/
+
+	__u32	pid;
+};
+
+In future, it can be extended by optional attributes. The request describes
+which task properties are required and for which processes they are required
+for.
+
+Response
+--------
+
+A response can be divided into a few netlink packets if the NETLINK_DUMP has
+been set in a request. Each task is described by a message. Each message
+contains the TASK_DIAG_PID attribute and optional attributes which have been
+requested. A message can be divided into a few parts if it doesn’t fit into a
+current netlink packet. In this case, the first message in the next packet
+contains the same PID and attributes which doesn’t  fit into the previous
+message.
