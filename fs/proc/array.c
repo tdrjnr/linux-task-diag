@@ -594,59 +594,6 @@ int proc_pid_statm(struct seq_file *m, struct pid_namespace *ns,
 
 #ifdef CONFIG_PROC_CHILDREN
 static struct task_struct *
-task_next_child(struct task_struct *parent, struct task_struct *prev, unsigned int pos)
-{
-	struct task_struct *task;
-
-	read_lock(&tasklist_lock);
-	/*
-	 * Lets try to continue searching first, this gives
-	 * us significant speedup on children-rich processes.
-	 */
-	if (prev) {
-		task = prev;
-		if (task && task->real_parent == parent &&
-		    !(list_empty(&task->sibling))) {
-			if (list_is_last(&task->sibling, &parent->children)) {
-				task = NULL;
-				goto out;
-			}
-			task = list_first_entry(&task->sibling,
-						struct task_struct, sibling);
-			goto out;
-		}
-	}
-
-	/*
-	 * Slow search case.
-	 *
-	 * We might miss some children here if children
-	 * are exited while we were not holding the lock,
-	 * but it was never promised to be accurate that
-	 * much.
-	 *
-	 * "Just suppose that the parent sleeps, but N children
-	 *  exit after we printed their tids. Now the slow paths
-	 *  skips N extra children, we miss N tasks." (c)
-	 *
-	 * So one need to stop or freeze the leader and all
-	 * its children to get a precise result.
-	 */
-	list_for_each_entry(task, &parent->children, sibling) {
-		if (pos-- == 0)
-			goto out;
-	}
-	task = NULL;
-out:
-	if (prev)
-		put_task_struct(prev);
-	if (task)
-		get_task_struct(task);
-	read_unlock(&tasklist_lock);
-	return task;
-}
-
-static struct task_struct *
 get_children_pid(struct inode *inode, struct task_struct *prev, loff_t pos)
 {
 	struct task_struct *start, *task = NULL;
