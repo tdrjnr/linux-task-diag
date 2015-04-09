@@ -654,6 +654,82 @@ out:
 }
 
 /*
+ * Find the first tid of a thread group to return to user space.
+ *
+ * Usually this is just the thread group leader, but if the users
+ * buffer was too small or there was a seek into the middle of the
+ * directory we have more work todo.
+ *
+ * In the case of a short read we start with find_task_by_pid.
+ *
+ * In the case of a seek we start with the leader and walk nr
+ * threads past it.
+ */
+struct task_struct *
+task_first_tid(struct task_struct *task, int tid, loff_t f_pos,
+					struct pid_namespace *ns)
+{
+	struct task_struct *pos;
+	unsigned long nr = f_pos;
+
+	if (nr != f_pos)	/* 32bit overflow? */
+		return NULL;
+
+	rcu_read_lock();
+
+	/* Attempt to start with the tid of a thread */
+	if (tid && nr) {
+		pos = find_task_by_pid_ns(tid, ns);
+		if (pos && same_thread_group(pos, task))
+			goto found;
+	}
+
+	/* If nr exceeds the number of threads there is nothing todo */
+	if (nr >= get_nr_threads(task))
+		goto fail;
+
+	/* If we haven't found our starting place yet start
+	 * with the leader and walk nr threads forward.
+	 */
+	pos = task = task->group_leader;
+	do {
+		if (!nr--)
+			goto found;
+	} while_each_thread(task, pos);
+fail:
+	pos = NULL;
+	goto out;
+found:
+	get_task_struct(pos);
+out:
+	rcu_read_unlock();
+	return pos;
+}
+
+/*
+ * Find the next thread in the thread list.
+ * Return NULL if there is an error or no next thread.
+ *
+ * The reference to the input task_struct is released.
+ */
+struct task_struct *task_next_tid(struct task_struct *start)
+{
+	struct task_struct *pos = NULL;
+	rcu_read_lock();
+	if (pid_alive(start)) {
+		pos = next_thread(start);
+		if (thread_group_leader(pos))
+			pos = NULL;
+		else
+			get_task_struct(pos);
+	}
+	rcu_read_unlock();
+	put_task_struct(start);
+	return pos;
+}
+
+
+/*
  * The pid hash table is scaled according to the amount of memory in the
  * machine.  From a minimum of 16 slots up to 4096 slots at one gigabyte or
  * more.
