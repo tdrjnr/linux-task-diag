@@ -104,6 +104,7 @@ struct task_diag_vma {
 
 #define TASK_DIAG_DUMP_ALL	0
 #define TASK_DIAG_DUMP_CHILDREN	1
+#define TASK_DIAG_DUMP_THREAD	2
 
 struct task_diag_pid {
 	__u64	show_flags;
