@@ -593,31 +593,26 @@ int proc_pid_statm(struct seq_file *m, struct pid_namespace *ns,
 }
 
 #ifdef CONFIG_PROC_CHILDREN
-static struct pid *
-get_children_pid(struct inode *inode, struct pid *pid_prev, loff_t pos)
+static struct task_struct *
+task_next_child(struct task_struct *parent, struct task_struct *prev, unsigned int pos)
 {
-	struct task_struct *start, *task;
-	struct pid *pid = NULL;
+	struct task_struct *task;
 
 	read_lock(&tasklist_lock);
-
-	start = pid_task(proc_pid(inode), PIDTYPE_PID);
-	if (!start)
-		goto out;
-
 	/*
 	 * Lets try to continue searching first, this gives
 	 * us significant speedup on children-rich processes.
 	 */
-	if (pid_prev) {
-		task = pid_task(pid_prev, PIDTYPE_PID);
-		if (task && task->real_parent == start &&
+	if (prev) {
+		task = prev;
+		if (task && task->real_parent == parent &&
 		    !(list_empty(&task->sibling))) {
-			if (list_is_last(&task->sibling, &start->children))
+			if (list_is_last(&task->sibling, &parent->children)) {
+				task = NULL;
 				goto out;
+			}
 			task = list_first_entry(&task->sibling,
 						struct task_struct, sibling);
-			pid = get_pid(task_pid(task));
 			goto out;
 		}
 	}
@@ -637,16 +632,34 @@ get_children_pid(struct inode *inode, struct pid *pid_prev, loff_t pos)
 	 * So one need to stop or freeze the leader and all
 	 * its children to get a precise result.
 	 */
-	list_for_each_entry(task, &start->children, sibling) {
-		if (pos-- == 0) {
-			pid = get_pid(task_pid(task));
-			break;
-		}
+	list_for_each_entry(task, &parent->children, sibling) {
+		if (pos-- == 0)
+			goto out;
 	}
-
+	task = NULL;
 out:
+	if (prev)
+		put_task_struct(prev);
+	if (task)
+		get_task_struct(task);
 	read_unlock(&tasklist_lock);
-	return pid;
+	return task;
+}
+
+static struct task_struct *
+get_children_pid(struct inode *inode, struct task_struct *prev, loff_t pos)
+{
+	struct task_struct *start, *task = NULL;
+
+	start = get_proc_task(inode);
+	if (!start)
+		goto out;
+
+	task = task_next_child(start, prev, pos);
+
+	put_task_struct(start);
+out:
+	return task;
 }
 
 static int children_seq_show(struct seq_file *seq, void *v)
@@ -654,7 +667,7 @@ static int children_seq_show(struct seq_file *seq, void *v)
 	struct inode *inode = seq->private;
 	pid_t pid;
 
-	pid = pid_nr_ns(v, inode->i_sb->s_fs_info);
+	pid = task_pid_nr_ns(v, inode->i_sb->s_fs_info);
 	seq_printf(seq, "%d ", pid);
 
 	return 0;
@@ -667,18 +680,18 @@ static void *children_seq_start(struct seq_file *seq, loff_t *pos)
 
 static void *children_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 {
-	struct pid *pid;
+	struct task_struct *task;
 
-	pid = get_children_pid(seq->private, v, *pos + 1);
-	put_pid(v);
+	task = get_children_pid(seq->private, v, *pos + 1);
 
 	++*pos;
-	return pid;
+	return task;
 }
 
 static void children_seq_stop(struct seq_file *seq, void *v)
 {
-	put_pid(v);
+	if (v)
+		put_task_struct(v);
 }
 
 static const struct seq_operations children_seq_ops = {
