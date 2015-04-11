@@ -559,6 +559,16 @@ static struct task_struct *iter_start(struct task_iter *iter)
 	}
 
 	switch (iter->req.dump_strategy) {
+	case TASK_DIAG_DUMP_ONE:
+		if (iter->parent == NULL)
+			return ERR_PTR(-ESRCH);
+		iter->pos = iter->cb->args[0];
+		if (iter->pos == 0) {
+			iter->task = iter->parent;
+			get_task_struct(iter->task);
+		} else
+			iter->task = NULL;
+		return iter->task;
 	case TASK_DIAG_DUMP_THREAD:
 		if (iter->parent == NULL)
 			return ERR_PTR(-ESRCH);
@@ -588,6 +598,13 @@ static struct task_struct *iter_start(struct task_iter *iter)
 static struct task_struct *iter_next(struct task_iter *iter)
 {
 	switch (iter->req.dump_strategy) {
+	case TASK_DIAG_DUMP_ONE:
+		iter->pos++;
+		iter->cb->args[0] = iter->pos;
+		if (iter->task)
+			put_task_struct(iter->task);
+		iter->task = NULL;
+		return NULL;
 	case TASK_DIAG_DUMP_THREAD:
 		iter->pos++;
 		iter->task = task_next_tid(iter->task);
