@@ -228,7 +228,7 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 
 	down_read(&mm->mmap_sem);
 	for (vma = mm->mmap; vma; vma = vma->vm_next, i++) {
-		struct task_diag_vma *diag_vma;
+		struct task_diag_vma diag_vma;
 		unsigned char *b = skb_tail_pointer(skb);
 		unsigned long start, end;
 		const char *name = NULL;
@@ -238,13 +238,11 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 
 		mark = vma->vm_start;
 
-		attr = nla_reserve(skb, TASK_DIAG_VMA, sizeof(struct task_diag_vma));
+		attr = nla_reserve(skb, TASK_DIAG_VMA, sizeof(diag_vma));
 		if (!attr) {
 			rc = -EMSGSIZE;
 			goto err;
 		}
-
-		diag_vma = nla_data(attr);
 
 		/* We don't show the stack guard page in /proc/maps */
 		start = vma->vm_start;
@@ -254,21 +252,30 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 		if (stack_guard_page_end(vma, end))
 			end -= PAGE_SIZE;
 
-		diag_vma->start	   = start;
-		diag_vma->end	   = end;
-		diag_vma->vm_flags = get_vma_flags(vma);
-		diag_vma->pgoff    = 0;
+		diag_vma.start    = start;
+		diag_vma.end      = end;
+		diag_vma.vm_flags = get_vma_flags(vma);
+		diag_vma.pgoff    = 0;
 
 		if (vma->vm_file) {
 			struct inode *inode = file_inode(vma->vm_file);
 			dev_t dev;
-			char *p;
 
 			dev = inode->i_sb->s_dev;
-			diag_vma->major = MAJOR(dev);
-			diag_vma->minor = MINOR(dev);
-			diag_vma->inode = inode->i_ino;
-			diag_vma->pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+			diag_vma.major = MAJOR(dev);
+			diag_vma.minor = MINOR(dev);
+			diag_vma.inode = inode->i_ino;
+			diag_vma.pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+		} else {
+			diag_vma.major = 0;
+			diag_vma.minor = 0;
+			diag_vma.inode = 0;
+			diag_vma.pgoff = 0;
+		}
+
+		memcpy(nla_data(attr), &diag_vma, sizeof(diag_vma));
+		if (vma->vm_file) {
+			char *p;
 
 			p = d_path(&vma->vm_file->f_path, page, PAGE_SIZE);
 			if (IS_ERR(p)) {
@@ -278,11 +285,6 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 			}
 			name = p;
 			goto done;
-		} else {
-			diag_vma->major = 0;
-			diag_vma->minor = 0;
-			diag_vma->inode = 0;
-			diag_vma->pgoff = 0;
 		}
 
 		if (vma->vm_ops && vma->vm_ops->name) {
@@ -396,7 +398,7 @@ err:
 }
 
 struct task_iter {
-	struct task_diag_pid *req;
+	struct task_diag_pid req;
 	struct pid_namespace *ns;
 	struct netlink_callback *cb;
 	struct task_struct *parent;
@@ -417,7 +419,7 @@ static void iter_stop(struct task_iter *iter)
 	if (iter->parent)
 		put_task_struct(iter->parent);
 
-	switch (iter->req->dump_stratagy) {
+	switch (iter->req.dump_stratagy) {
 	case TASK_DIAG_DUMP_ALL:
 		task = iter->tgid.task;
 	default:
@@ -429,15 +431,15 @@ static void iter_stop(struct task_iter *iter)
 
 static struct task_struct *iter_start(struct task_iter *iter)
 {
-	if (iter->req->pid > 0) {
+	if (iter->req.pid > 0) {
 		rcu_read_lock();
-		iter->parent = find_task_by_pid_ns(iter->req->pid, iter->ns);
+		iter->parent = find_task_by_pid_ns(iter->req.pid, iter->ns);
 		if (iter->parent)
 			get_task_struct(iter->parent);
 		rcu_read_unlock();
 	}
 
-	switch (iter->req->dump_stratagy) {
+	switch (iter->req.dump_stratagy) {
 	case TASK_DIAG_DUMP_ONE:
 		if (iter->parent == NULL)
 			return ERR_PTR(-ESRCH);
@@ -476,7 +478,7 @@ static struct task_struct *iter_start(struct task_iter *iter)
 
 static struct task_struct *iter_next(struct task_iter *iter)
 {
-	switch (iter->req->dump_stratagy) {
+	switch (iter->req.dump_stratagy) {
 	case TASK_DIAG_DUMP_ONE:
 		iter->pos++;
 		iter->cb->args[0] = iter->pos;
@@ -510,22 +512,20 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 	struct pid_namespace *ns = task_active_pid_ns(current);
 	struct task_iter iter;
 	struct nlattr *na;
-	struct task_diag_pid *req;
 	struct task_struct *task;
 	int rc;
 
-	if (nlmsg_len(cb->nlh) < GENL_HDRLEN + sizeof(*req))
+	if (nlmsg_len(cb->nlh) < GENL_HDRLEN + sizeof(iter.req))
 		return -EINVAL;
 
 	na = nlmsg_data(cb->nlh) + GENL_HDRLEN;
 	if (na->nla_type < 0)
 		return -EINVAL;
 
-	req = (struct task_diag_pid *) nla_data(na);
+	memcpy(&iter.req, nla_data(na), sizeof(iter.req));
 
 	iter.ns     = ns;
 	iter.cb     = cb;
-	iter.req    = req;
 	iter.parent = NULL;
 
 	task = iter_start(&iter);
@@ -535,7 +535,7 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 	for (; task; task = iter_next(&iter)) {
 		if (!ptrace_may_access(task, PTRACE_MODE_READ))
 			continue;
-		rc = task_diag_fill(task, skb, req->show_flags,
+		rc = task_diag_fill(task, skb, iter.req.show_flags,
 				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq, cb);
 		if (rc < 0) {
 			if (rc != -EMSGSIZE) {
@@ -553,20 +553,22 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 {
 	struct task_struct *tsk = NULL;
-	struct task_diag_pid *req;
+	struct task_diag_pid *preq, req;
 	struct sk_buff *msg = NULL;
 	size_t size;
 	int rc;
 
-	req = nla_data(info->attrs[TASKDIAG_CMD_ATTR_GET]);
-	if (req == NULL)
+	preq = nla_data(info->attrs[TASKDIAG_CMD_ATTR_GET]);
+	if (preq == NULL)
 		return -EINVAL;
 
-	if (nla_len(info->attrs[TASKDIAG_CMD_ATTR_GET]) < sizeof(*req))
+	if (nla_len(info->attrs[TASKDIAG_CMD_ATTR_GET]) < sizeof(req))
 		return -EINVAL;
+
+	memcpy(&req, preq, sizeof(req));
 
 	rcu_read_lock();
-	tsk = find_task_by_vpid(req->pid);
+	tsk = find_task_by_vpid(req.pid);
 	if (tsk)
 		get_task_struct(tsk);
 	rcu_read_unlock();
@@ -578,7 +580,7 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 		return -EPERM;
 	}
 
-	size = taskdiag_packet_size(req->show_flags);
+	size = taskdiag_packet_size(req.show_flags);
 
 	while (1) {
 		msg = genlmsg_new(size, GFP_KERNEL);
@@ -587,7 +589,7 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 			return -EMSGSIZE;
 		}
 
-		rc = task_diag_fill(tsk, msg, req->show_flags,
+		rc = task_diag_fill(tsk, msg, req.show_flags,
 					info->snd_portid, info->snd_seq, NULL);
 		if (rc != -EMSGSIZE)
 			break;

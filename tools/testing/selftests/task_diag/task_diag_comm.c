@@ -208,10 +208,10 @@ int show_task(struct nlmsghdr *hdr)
 			break;
 		case TASK_DIAG_VMA:
 		{
-			struct task_diag_vma *vma;
+			struct task_diag_vma vma;
 
-			vma = (struct task_diag_vma *) NLA_DATA(na);
-			pr_info("%016llx-%016llx %llx\n", vma->start, vma->end, vma->vm_flags);
+			memcpy(&vma, NLA_DATA(na), sizeof(vma));
+			pr_info("%016llx-%016llx %llx\n", vma.start, vma.end, vma.vm_flags);
 			break;
 		}
 		case TASK_DIAG_VMA_NAME:
