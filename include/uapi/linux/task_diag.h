@@ -103,6 +103,8 @@ struct task_diag_vma {
 	__u32 major;
 	__u32 minor;
 	__u64 inode;
+	__u32 generation;
+	__u32 reserved;    /* 64-bit alignment */
 };
 
 #define TASK_DIAG_DUMP_ALL	0

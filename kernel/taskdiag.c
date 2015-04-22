@@ -265,11 +265,13 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 			diag_vma.major = MAJOR(dev);
 			diag_vma.minor = MINOR(dev);
 			diag_vma.inode = inode->i_ino;
+			diag_vma.generation = inode->i_generation;
 			diag_vma.pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
 		} else {
 			diag_vma.major = 0;
 			diag_vma.minor = 0;
 			diag_vma.inode = 0;
+			diag_vma.generation = 0;
 			diag_vma.pgoff = 0;
 		}
 
