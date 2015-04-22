@@ -6,7 +6,7 @@
 
 enum {
 	/* optional attributes which can be specified in show_flags */
-	TASK_DIAG_MSG	= 0,
+	TASK_DIAG_BASE	= 0,
 	TASK_DIAG_CRED,
 	TASK_DIAG_STAT,
 	TASK_DIAG_VMA,
@@ -19,7 +19,7 @@ enum {
 #define TASK_DIAG_ATTR_MAX (__TASK_DIAG_ATTR_MAX - 1)
 };
 
-#define TASK_DIAG_SHOW_MSG	(1ULL << TASK_DIAG_MSG)
+#define TASK_DIAG_SHOW_BASE	(1ULL << TASK_DIAG_BASE)
 #define TASK_DIAG_SHOW_CRED	(1ULL << TASK_DIAG_CRED)
 #define TASK_DIAG_SHOW_STAT	(1ULL << TASK_DIAG_STAT)
 #define TASK_DIAG_SHOW_VMA	(1ULL << TASK_DIAG_VMA)
@@ -36,7 +36,7 @@ enum {
 
 #define TASK_DIAG_COMM_LEN 16
 
-struct task_diag_msg {
+struct task_diag_base {
 	__u32	tgid;
 	__u32	pid;
 	__u32	ppid;

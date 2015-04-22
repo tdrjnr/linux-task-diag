@@ -14,8 +14,8 @@ static size_t taskdiag_packet_size(u64 show_flags)
 
 	size = nla_total_size(sizeof(pid_t));
 
-	if (show_flags & TASK_DIAG_SHOW_MSG)
-		size += nla_total_size(sizeof(struct task_diag_msg));
+	if (show_flags & TASK_DIAG_SHOW_BASE)
+		size += nla_total_size(sizeof(struct task_diag_base));
 
 	if (show_flags & TASK_DIAG_SHOW_CRED)
 		size += nla_total_size(sizeof(struct task_diag_creds));
@@ -51,41 +51,41 @@ static inline const __u8 get_task_state(struct task_struct *tsk)
 	return task_state_array[fls(state)];
 }
 
-static int fill_task_msg(struct task_struct *p, struct sk_buff *skb)
+static int fill_task_base(struct task_struct *p, struct sk_buff *skb)
 {
 	struct pid_namespace *ns = task_active_pid_ns(current);
-	struct task_diag_msg *msg;
+	struct task_diag_base *base;
 	struct nlattr *attr;
 	char tcomm[sizeof(p->comm)];
 	struct task_struct *tracer;
 
-	attr = nla_reserve(skb, TASK_DIAG_MSG, sizeof(struct task_diag_msg));
+	attr = nla_reserve(skb, TASK_DIAG_BASE, sizeof(struct task_diag_base));
 	if (!attr)
 		return -EMSGSIZE;
 
-	msg = nla_data(attr);
+	base = nla_data(attr);
 
 	rcu_read_lock();
-	msg->ppid = pid_alive(p) ?
+	base->ppid = pid_alive(p) ?
 		task_tgid_nr_ns(rcu_dereference(p->real_parent), ns) : 0;
 
-	msg->tpid = 0;
+	base->tpid = 0;
 	tracer = ptrace_parent(p);
 	if (tracer)
-		msg->tpid = task_pid_nr_ns(tracer, ns);
+		base->tpid = task_pid_nr_ns(tracer, ns);
 
-	msg->tgid = task_tgid_nr_ns(p, ns);
-	msg->pid = task_pid_nr_ns(p, ns);
-	msg->sid = task_session_nr_ns(p, ns);
-	msg->pgid = task_pgrp_nr_ns(p, ns);
+	base->tgid = task_tgid_nr_ns(p, ns);
+	base->pid = task_pid_nr_ns(p, ns);
+	base->sid = task_session_nr_ns(p, ns);
+	base->pgid = task_pgrp_nr_ns(p, ns);
 
 	rcu_read_unlock();
 
 	get_task_comm(tcomm, p);
-	memset(msg->comm, 0, TASK_DIAG_COMM_LEN);
-	strncpy(msg->comm, tcomm, TASK_DIAG_COMM_LEN);
+	memset(base->comm, 0, TASK_DIAG_COMM_LEN);
+	strncpy(base->comm, tcomm, TASK_DIAG_COMM_LEN);
 
-	msg->state = get_task_state(p);
+	base->state = get_task_state(p);
 
 	return 0;
 }
@@ -349,9 +349,9 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	if (err)
 		goto err;
 
-	if (show_flags & TASK_DIAG_SHOW_MSG) {
+	if (show_flags & TASK_DIAG_SHOW_BASE) {
 		if (i >= n)
-			err = fill_task_msg(tsk, skb);
+			err = fill_task_base(tsk, skb);
 		if (err)
 			goto err;
 		i++;
