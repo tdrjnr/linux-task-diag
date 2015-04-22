@@ -14,6 +14,9 @@ enum {
 	/* other attributes */
 	TASK_DIAG_PID	= 64,
 	TASK_DIAG_VMA_NAME,
+
+	__TASK_DIAG_ATTR_MAX
+#define TASK_DIAG_ATTR_MAX (__TASK_DIAG_ATTR_MAX - 1)
 };
 
 #define TASK_DIAG_SHOW_MSG	(1ULL << TASK_DIAG_MSG)
