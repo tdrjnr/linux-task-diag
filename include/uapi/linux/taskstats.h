@@ -181,7 +181,7 @@ enum {
 	CGROUPSTATS_CMD_GET,		/* user->kernel request/get-response */
 	CGROUPSTATS_CMD_NEW,		/* kernel->user event */
 
-	TASKDIAG_CMD_GET,
+	TASK_DIAG_CMD_GET,
 
 	__TASKSTATS_CMD_MAX,
 };

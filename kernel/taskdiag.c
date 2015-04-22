@@ -1,6 +1,6 @@
 #include <linux/kernel.h>
 #include <linux/taskstats_kern.h>
-#include <uapi/linux/taskdiag.h>
+#include <uapi/linux/task_diag.h>
 #include <net/genetlink.h>
 #include <linux/pid_namespace.h>
 #include <linux/ptrace.h>
@@ -340,7 +340,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	if (cb)
 		n = cb->args[1];
 
-	reply = genlmsg_put(skb, portid, seq, &taskstats_family, 0, TASKDIAG_CMD_GET);
+	reply = genlmsg_put(skb, portid, seq, &taskstats_family, 0, TASK_DIAG_CMD_GET);
 	if (reply == NULL)
 		return -EMSGSIZE;
 
@@ -558,11 +558,11 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 	size_t size;
 	int rc;
 
-	preq = nla_data(info->attrs[TASKDIAG_CMD_ATTR_GET]);
+	preq = nla_data(info->attrs[TASK_DIAG_CMD_ATTR_GET]);
 	if (preq == NULL)
 		return -EINVAL;
 
-	if (nla_len(info->attrs[TASKDIAG_CMD_ATTR_GET]) < sizeof(req))
+	if (nla_len(info->attrs[TASK_DIAG_CMD_ATTR_GET]) < sizeof(req))
 		return -EINVAL;
 
 	memcpy(&req, preq, sizeof(req));

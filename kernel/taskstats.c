@@ -18,7 +18,7 @@
 
 #include <linux/kernel.h>
 #include <linux/taskstats_kern.h>
-#include <linux/taskdiag.h>
+#include <linux/task_diag.h>
 #include <linux/tsacct_kern.h>
 #include <linux/delayacct.h>
 #include <linux/cpumask.h>
@@ -668,8 +668,8 @@ err:
 
 #ifdef CONFIG_TASK_DIAG
 static const struct nla_policy
-			taskdiag_cmd_get_policy[TASKDIAG_CMD_ATTR_MAX+1] = {
-	[TASKDIAG_CMD_ATTR_GET]  = {	.type = NLA_UNSPEC,
+			taskdiag_cmd_get_policy[TASK_DIAG_CMD_ATTR_MAX+1] = {
+	[TASK_DIAG_CMD_ATTR_GET]  = {	.type = NLA_UNSPEC,
 					.len = sizeof(struct task_diag_pid)
 				},
 };
@@ -689,7 +689,7 @@ static const struct genl_ops taskstats_ops[] = {
 	},
 #ifdef CONFIG_TASK_DIAG
 	{
-		.cmd		= TASKDIAG_CMD_GET,
+		.cmd		= TASK_DIAG_CMD_GET,
 		.doit		= taskdiag_doit,
 		.dumpit		= taskdiag_dumpit,
 		.policy		= taskdiag_cmd_get_policy,

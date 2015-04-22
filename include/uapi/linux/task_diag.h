@@ -1,5 +1,5 @@
-#ifndef _LINUX_TASKDIAG_H
-#define _LINUX_TASKDIAG_H
+#ifndef _LINUX_TASK_DIAG_H
+#define _LINUX_TASK_DIAG_H
 
 #include <linux/types.h>
 #include <linux/capability.h>
@@ -115,11 +115,11 @@ struct task_diag_pid {
 };
 
 enum {
-	TASKDIAG_CMD_ATTR_UNSPEC = 0,
-	TASKDIAG_CMD_ATTR_GET,
-	__TASKDIAG_CMD_ATTR_MAX,
+	TASK_DIAG_CMD_ATTR_UNSPEC = 0,
+	TASK_DIAG_CMD_ATTR_GET,
+	__TASK_DIAG_CMD_ATTR_MAX,
 };
 
-#define TASKDIAG_CMD_ATTR_MAX (__TASKDIAG_CMD_ATTR_MAX - 1)
+#define TASK_DIAG_CMD_ATTR_MAX (__TASK_DIAG_CMD_ATTR_MAX - 1)
 
-#endif /* _LINUX_TASKDIAG_H */
+#endif /* _LINUX_TASK_DIAG_H */
