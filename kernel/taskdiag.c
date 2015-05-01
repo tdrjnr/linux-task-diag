@@ -298,7 +298,7 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 	struct nlattr *attr;
 	unsigned long mark = 0;
 	char *page;
-	int i, rc;
+	int i, rc = -EMSGSIZE;
 
 	if (cb)
 		mark = cb->args[2];
@@ -325,10 +325,8 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 
 		attr = nla_reserve(skb, TASK_DIAG_VMA,
 				   sizeof(struct task_diag_vma));
-		if (!attr) {
-			rc = -EMSGSIZE;
+		if (!attr)
 			goto err;
-		}
 
 		fill_diag_vma(vma, nla_data(attr));
 
@@ -346,7 +344,6 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 			attr = nla_reserve(skb, TASK_DIAG_VMA_NAME, len);
 			if (!attr) {
 				nlmsg_trim(skb, b);
-				rc = -EMSGSIZE;
 				goto err;
 			}
 
@@ -355,12 +352,8 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 		*progress = true;
 	}
 
-	up_read(&mm->mmap_sem);
-	mmput(mm);
-	free_page((unsigned long) page);
-	if (cb)
-		cb->args[2] = 0;
-	return 0;
+	rc = 0;
+	mark = 0;
 
 err:
 	up_read(&mm->mmap_sem);
