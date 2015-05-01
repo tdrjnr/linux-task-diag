@@ -12,7 +12,7 @@ enum {
 	TASK_DIAG_VMA,
 
 	/* other attributes */
-	TASK_DIAG_PID	= 64,
+	TASK_DIAG_PID	= 64,   /* u32 */
 	TASK_DIAG_VMA_NAME,
 
 	__TASK_DIAG_ATTR_MAX

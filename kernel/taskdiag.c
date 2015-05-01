@@ -12,7 +12,7 @@ static size_t taskdiag_packet_size(u64 show_flags)
 {
 	size_t size;
 
-	size = nla_total_size(sizeof(pid_t));
+	size = nla_total_size(sizeof(u32)); /* PID */
 
 	if (show_flags & TASK_DIAG_SHOW_BASE)
 		size += nla_total_size(sizeof(struct task_diag_base));
@@ -337,7 +337,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	void *reply;
 	int err = 0, i = 0, n = 0;
 	bool progress = false;
-	pid_t pid;
+	u32 pid;
 
 	if (cb)
 		n = cb->args[1];
@@ -347,7 +347,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 		return -EMSGSIZE;
 
 	pid = task_pid_vnr(tsk);
-	err = nla_put(skb, TASK_DIAG_PID, sizeof(pid), &pid);
+	err = nla_put_u32(skb, TASK_DIAG_PID, pid);
 	if (err)
 		goto err;
 
