@@ -296,6 +296,8 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 	struct vm_area_struct *vma;
 	struct mm_struct *mm;
 	struct nlattr *attr;
+	struct task_diag_vma *diag_vma;
+	int len = 0;
 	unsigned long mark = 0;
 	char *page;
 	int i, rc = -EMSGSIZE;
@@ -313,47 +315,72 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 		return -ENOMEM;
 	}
 
+	attr = nla_reserve(skb, TASK_DIAG_VMA, sizeof(struct task_diag_vma));
+	if (!attr)
+		goto err;
+
+	diag_vma = nla_data(attr);
+
 	down_read(&mm->mmap_sem);
 	for (vma = mm->mmap; vma; vma = vma->vm_next, i++) {
 		unsigned char *b = skb_tail_pointer(skb);
 		const char *name;
+		void *pfile;
+
 
 		if (mark > vma->vm_start)
 			continue;
 
-		mark = vma->vm_start;
+		/* setup pointer for next map */
+		if (diag_vma == NULL) {
+			diag_vma = nla_reserve_nohdr(skb, sizeof(*diag_vma));
 
-		attr = nla_reserve(skb, TASK_DIAG_VMA,
-				   sizeof(struct task_diag_vma));
-		if (!attr)
-			goto err;
+			if (diag_vma == NULL) {
+				nlmsg_trim(skb, b);
+				goto out;
+			}
+		}
 
-		fill_diag_vma(vma, nla_data(attr));
+		fill_diag_vma(vma, diag_vma);
 
 		name = get_vma_name(vma, page);
 		if (IS_ERR(name)) {
 			nlmsg_trim(skb, b);
 			rc = PTR_ERR(name);
-			goto err;
+			goto out;
 		}
 
 		if (name) {
-			int len;
+			diag_vma->namelen = strlen(name) + 1;
 
-			len = strlen(name) + 1;
-			attr = nla_reserve(skb, TASK_DIAG_VMA_NAME, len);
-			if (!attr) {
+			/* reserves NLA_ALIGN(len) */
+			pfile = nla_reserve_nohdr(skb, diag_vma->namelen);
+			if (pfile == NULL) {
 				nlmsg_trim(skb, b);
-				goto err;
+				goto out;
 			}
+		} else
+			diag_vma->namelen = 0;
 
-			memcpy(nla_data(attr), name, len);
+		len += sizeof(*diag_vma);
+
+		if (name) {
+			memcpy(pfile, name, diag_vma->namelen);
+			len += NLA_ALIGN(diag_vma->namelen);
 		}
+
+		mark = vma->vm_start;
+
+		/* reset to reserve space on next pass if there is one */
+		diag_vma = NULL;
+
 		*progress = true;
 	}
 
 	rc = 0;
 	mark = 0;
+out:
+	attr->nla_len = nla_attr_size(len);
 
 err:
 	up_read(&mm->mmap_sem);

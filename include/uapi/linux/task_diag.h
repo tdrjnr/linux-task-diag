@@ -13,7 +13,6 @@ enum {
 
 	/* other attributes */
 	TASK_DIAG_PID	= 64,   /* u32 */
-	TASK_DIAG_VMA_NAME,
 
 	__TASK_DIAG_ATTR_MAX
 #define TASK_DIAG_ATTR_MAX (__TASK_DIAG_ATTR_MAX - 1)
@@ -96,6 +95,7 @@ struct task_diag_creds {
 #define TASK_DIAG_VMA_F_NOHUGEPAGE	(1ULL << 26)
 #define TASK_DIAG_VMA_F_MERGEABLE	(1ULL << 27)
 
+/* task_diag_vma must be NLA_ALIGN'ed */
 struct task_diag_vma {
 	__u64 start, end;
 	__u64 vm_flags;
@@ -104,7 +104,9 @@ struct task_diag_vma {
 	__u32 minor;
 	__u64 inode;
 	__u32 generation;
-	__u32 reserved;    /* 64-bit alignment */
+	__u32 namelen;
+	/* name must be last */
+	char name[0];
 };
 
 #define TASK_DIAG_DUMP_ALL	0
