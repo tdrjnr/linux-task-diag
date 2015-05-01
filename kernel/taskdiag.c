@@ -8,7 +8,7 @@
 #include <linux/sched.h>
 #include <linux/taskstats.h>
 
-static size_t taskdiag_packet_size(u64 show_flags)
+static size_t taskdiag_packet_size(u64 show_flags, int n_vma)
 {
 	size_t size;
 
@@ -22,6 +22,16 @@ static size_t taskdiag_packet_size(u64 show_flags)
 
 	if (show_flags & TASK_DIAG_SHOW_STAT)
 		size += nla_total_size(sizeof(struct taskstats));
+
+	if (show_flags & TASK_DIAG_SHOW_VMA && n_vma > 0) {
+		size = nla_total_size(sizeof(u32));  /* VMA_SIZE */
+		size += nla_total_size(sizeof(struct task_diag_vma) * n_vma);
+		/*
+		 * 128 is a schwag on average path length for maps; used to
+		 * ballpark initial memory allocation for genl msg
+		 */
+		size += nla_total_size(128 * n_vma);
+	}
 
 	return size;
 }
@@ -202,6 +212,24 @@ static u64 get_vma_flags(struct vm_area_struct *vma)
 	}
 
 	return flags;
+}
+
+static int task_vma_num(struct mm_struct *mm)
+{
+	struct vm_area_struct *vma;
+	int n_vma = 0;
+
+	if (!mm || !atomic_inc_not_zero(&mm->mm_users))
+		return 0;
+
+	down_read(&mm->mmap_sem);
+	for (vma = mm->mmap; vma; vma = vma->vm_next, n_vma++)
+		;
+
+	up_read(&mm->mmap_sem);
+	mmput(mm);
+
+	return n_vma;
 }
 
 static void fill_diag_vma(struct vm_area_struct *vma,
@@ -596,7 +624,7 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 		return -EPERM;
 	}
 
-	size = taskdiag_packet_size(req.show_flags);
+	size = taskdiag_packet_size(req.show_flags, task_vma_num(tsk->mm));
 
 	while (1) {
 		msg = genlmsg_new(size, GFP_KERNEL);
