@@ -204,6 +204,44 @@ static u64 get_vma_flags(struct vm_area_struct *vma)
 	return flags;
 }
 
+static void fill_diag_vma(struct vm_area_struct *vma,
+			  struct task_diag_vma *diag_vma)
+{
+	unsigned long start, end;
+
+	/* We don't show the stack guard page in /proc/maps */
+	start = vma->vm_start;
+	if (stack_guard_page_start(vma, start))
+		start += PAGE_SIZE;
+
+	end = vma->vm_end;
+	if (stack_guard_page_end(vma, end))
+		end -= PAGE_SIZE;
+
+	diag_vma->start    = start;
+	diag_vma->end      = end;
+	diag_vma->vm_flags = get_vma_flags(vma);
+	diag_vma->pgoff    = 0;
+
+	if (vma->vm_file) {
+		struct inode *inode = file_inode(vma->vm_file);
+		dev_t dev;
+
+		dev = inode->i_sb->s_dev;
+		diag_vma->major = MAJOR(dev);
+		diag_vma->minor = MINOR(dev);
+		diag_vma->inode = inode->i_ino;
+		diag_vma->generation = inode->i_generation;
+		diag_vma->pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+	} else {
+		diag_vma->major = 0;
+		diag_vma->minor = 0;
+		diag_vma->inode = 0;
+		diag_vma->generation = 0;
+		diag_vma->pgoff = 0;
+	}
+}
+
 static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_callback *cb, bool *progress)
 {
 	struct vm_area_struct *vma;
@@ -228,9 +266,7 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 
 	down_read(&mm->mmap_sem);
 	for (vma = mm->mmap; vma; vma = vma->vm_next, i++) {
-		struct task_diag_vma diag_vma;
 		unsigned char *b = skb_tail_pointer(skb);
-		unsigned long start, end;
 		const char *name = NULL;
 
 		if (mark > vma->vm_start)
@@ -238,44 +274,15 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 
 		mark = vma->vm_start;
 
-		attr = nla_reserve(skb, TASK_DIAG_VMA, sizeof(diag_vma));
+		attr = nla_reserve(skb, TASK_DIAG_VMA,
+				   sizeof(struct task_diag_vma));
 		if (!attr) {
 			rc = -EMSGSIZE;
 			goto err;
 		}
 
-		/* We don't show the stack guard page in /proc/maps */
-		start = vma->vm_start;
-		if (stack_guard_page_start(vma, start))
-			start += PAGE_SIZE;
-		end = vma->vm_end;
-		if (stack_guard_page_end(vma, end))
-			end -= PAGE_SIZE;
+		fill_diag_vma(vma, nla_data(attr));
 
-		diag_vma.start    = start;
-		diag_vma.end      = end;
-		diag_vma.vm_flags = get_vma_flags(vma);
-		diag_vma.pgoff    = 0;
-
-		if (vma->vm_file) {
-			struct inode *inode = file_inode(vma->vm_file);
-			dev_t dev;
-
-			dev = inode->i_sb->s_dev;
-			diag_vma.major = MAJOR(dev);
-			diag_vma.minor = MINOR(dev);
-			diag_vma.inode = inode->i_ino;
-			diag_vma.generation = inode->i_generation;
-			diag_vma.pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
-		} else {
-			diag_vma.major = 0;
-			diag_vma.minor = 0;
-			diag_vma.inode = 0;
-			diag_vma.generation = 0;
-			diag_vma.pgoff = 0;
-		}
-
-		memcpy(nla_data(attr), &diag_vma, sizeof(diag_vma));
 		if (vma->vm_file) {
 			char *p;
 
