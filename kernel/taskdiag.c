@@ -242,6 +242,27 @@ static void fill_diag_vma(struct vm_area_struct *vma,
 	}
 }
 
+static const char *get_vma_name(struct vm_area_struct *vma, char *page)
+{
+	const char *name = NULL;
+
+	if (vma->vm_file) {
+		name = d_path(&vma->vm_file->f_path, page, PAGE_SIZE);
+		goto out;
+	}
+
+	if (vma->vm_ops && vma->vm_ops->name) {
+		name = vma->vm_ops->name(vma);
+		if (name)
+			goto out;
+	}
+
+	name = arch_vma_name(vma);
+
+out:
+	return name;
+}
+
 static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_callback *cb, bool *progress)
 {
 	struct vm_area_struct *vma;
@@ -267,7 +288,7 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 	down_read(&mm->mmap_sem);
 	for (vma = mm->mmap; vma; vma = vma->vm_next, i++) {
 		unsigned char *b = skb_tail_pointer(skb);
-		const char *name = NULL;
+		const char *name;
 
 		if (mark > vma->vm_start)
 			continue;
@@ -283,27 +304,13 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 
 		fill_diag_vma(vma, nla_data(attr));
 
-		if (vma->vm_file) {
-			char *p;
-
-			p = d_path(&vma->vm_file->f_path, page, PAGE_SIZE);
-			if (IS_ERR(p)) {
-				nlmsg_trim(skb, b);
-				rc = PTR_ERR(p);
-				goto err;
-			}
-			name = p;
-			goto done;
+		name = get_vma_name(vma, page);
+		if (IS_ERR(name)) {
+			nlmsg_trim(skb, b);
+			rc = PTR_ERR(name);
+			goto err;
 		}
 
-		if (vma->vm_ops && vma->vm_ops->name) {
-			name = vma->vm_ops->name(vma);
-			if (name)
-				goto done;
-		}
-
-		name = arch_vma_name(vma);
-done:
 		if (name) {
 			int len;
 
