@@ -4,7 +4,7 @@
 #include <stdio.h>
 
 #include <linux/genetlink.h>
-#include "taskdiag.h"
+#include "task_diag.h"
 
 /*
  * Generic macros for dealing with netlink sockets. Might be duplicated
@@ -17,7 +17,7 @@
 #define NLA_PAYLOAD(len)	(len - NLA_HDRLEN)
 
 #define pr_err(fmt, ...)				\
-		fprintf(stderr, fmt, ##__VA_ARGS__)
+		fprintf(stderr, fmt"\n", ##__VA_ARGS__)
 
 #define pr_perror(fmt, ...)				\
 		fprintf(stderr, fmt " : %m\n", ##__VA_ARGS__)
@@ -29,19 +29,7 @@ extern int quiet;
 			printf(fmt, ##arg);	\
 	} while (0)				\
 
-struct msgtemplate {
-	struct nlmsghdr n;
-	struct genlmsghdr g;
-	char body[4096];
-};
-
-extern int create_nl_socket(int protocol);
-extern int send_cmd(int sd, __u16 nlmsg_type, __u32 nlmsg_pid,
-	     __u8 genl_cmd, __u16 nla_type,
-	     void *nla_data, int nla_len, int dump);
-
-extern int get_family_id(int sd);
-extern int nlmsg_receive(void *buf, int len, int (*cb)(struct nlmsghdr *));
-extern int show_task(struct nlmsghdr *hdr);
+struct genl_ops ops;
+int parse_cb(struct nl_msg *msg, void *arg);
 
 #endif /* __TASK_DIAG_COMM__ */

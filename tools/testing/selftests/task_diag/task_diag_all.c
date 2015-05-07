@@ -10,92 +10,121 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <dirent.h>
 
-#include "task_diag_comm.h"
-#include "taskdiag.h"
+#include <linux/netlink.h>
+#include <netlink/socket.h>
+#include <linux/genetlink.h>
+#include <netlink/genl/ctrl.h>
+#include <netlink/genl/genl.h>
+#include <netlink/genl/mngt.h>
+
+#include "task_diag.h"
 #include "taskstats.h"
-
-int tasks;
-
-
-extern int _show_task(struct nlmsghdr *hdr)
-{
-	tasks++;
-	return show_task(hdr);
-}
+#include "task_diag_comm.h"
 
 int main(int argc, char *argv[])
 {
+	struct nl_sock *sock;
 	int exit_status = 1;
-	int rc, rep_len, id;
-	int nl_sd = -1;
-	struct {
-		struct task_diag_pid req;
-	} pid_req;
-	char buf[40960];
+	int id;
+	struct task_diag_pid req;
+	struct nl_msg *msg;
+	void *hdr;
+	int err;
 
-	quiet = 0;
+	req.show_flags = TASK_DIAG_SHOW_BASE | TASK_DIAG_SHOW_CRED | TASK_DIAG_SHOW_VMA;
 
-	pid_req.req.show_flags = TASK_DIAG_SHOW_MSG | TASK_DIAG_SHOW_CRED;
+	if (argc < 2) {
+		pr_err("Usage: %s type pid", argv[0]);
+		return 1;
+	}
+
+	req.pid = 0; /* dump all tasks by default */
 	if (argc > 2) {
-		pid_req.req.pid = atoi(argv[2]);
+		req.pid = atoi(argv[2]);
 		switch (argv[1][0]) {
 		case 'c':
-			pid_req.req.dump_stratagy = TASK_DIAG_DUMP_CHILDREN;
+			req.dump_stratagy = TASK_DIAG_DUMP_CHILDREN;
 			break;
 		case 't':
-			pid_req.req.dump_stratagy = TASK_DIAG_DUMP_THREAD;
+			req.dump_stratagy = TASK_DIAG_DUMP_THREAD;
 			break;
 		case 'a':
-			pid_req.req.dump_stratagy = TASK_DIAG_DUMP_ALL;
-			pid_req.req.pid = 0;
+			req.dump_stratagy = TASK_DIAG_DUMP_ALL;
+			req.pid = 0;
 			break;
 		default:
 			pr_err("Usage: %s type pid", argv[0]);
 			return 1;
 		}
 	}
-	//pid_req.req.dump_stratagy = TASK_DIAG_DUMP_CHILDREN;
-	//pid_req.req.pid = 1;
 
-	nl_sd = create_nl_socket(NETLINK_GENERIC);
-	if (nl_sd < 0)
+	sock = nl_socket_alloc();
+	if (sock == NULL)
+		return -1;
+	nl_connect(sock, NETLINK_GENERIC);
+
+	err = genl_register_family(&ops);
+	if (err < 0) {
+		pr_err("Unable to register Generic Netlink family");
+		return -1;
+	}
+
+	err = genl_ops_resolve(sock, &ops);
+	if (err < 0) {
+		pr_err("Unable to resolve family name");
+		return -1;
+	}
+
+	id = genl_ctrl_resolve(sock, TASKSTATS_GENL_NAME);
+	if (id == GENL_ID_GENERATE)
 		return -1;
 
-	id = get_family_id(nl_sd);
-	if (!id)
-		goto err;
-
-	rc = send_cmd(nl_sd, id, getpid(), TASKDIAG_CMD_GET,
-		      TASKDIAG_CMD_ATTR_GET, &pid_req, sizeof(pid_req), 1);
-	pr_info("Sent pid/tgid, retval %d\n", rc);
-	if (rc < 0)
-		goto err;
-
-	while (1) {
-		int err;
-
-		rep_len = recv(nl_sd, buf, sizeof(buf), 0);
-		pr_info("received %d bytes\n", rep_len);
-
-		if (rep_len < 0) {
-			pr_perror("Unable to receive a response\n");
-			goto err;
-		}
-
-		if (rep_len == 0)
-			break;
-
-		err = nlmsg_receive(buf, rep_len, &_show_task);
-		if (err < 0)
-			goto err;
-		if (err == 0)
-			break;
+	msg = nlmsg_alloc();
+	if (msg == NULL) {
+		pr_err("Unable to allocate netlink message");
+		return -1;
 	}
-	printf("tasks: %d\n", tasks);
+
+	hdr = genlmsg_put(msg, NL_AUTO_PORT, NL_AUTO_SEQ, id,
+			  0, NLM_F_DUMP, TASK_DIAG_CMD_GET, 0);
+	if (hdr == NULL) {
+		pr_err("Unable to write genl header");
+		return -1;
+	}
+
+	err = nla_put(msg, TASKSTATS_CMD_GET, sizeof(struct task_diag_pid), &req);
+	if (err < 0) {
+		pr_err("Unable to add attribute: %s", nl_geterror(err));
+		return -1;
+	}
+
+	err = nl_send_auto_complete(sock, msg);
+	if (err < 0) {
+		pr_err("Unable to send message: %s", nl_geterror(err));
+		return -1;
+	}
+
+	nlmsg_free(msg);
+
+	err = nl_socket_modify_cb(sock, NL_CB_VALID, NL_CB_CUSTOM,
+			parse_cb, NULL);
+	if (err < 0) {
+		pr_err("Unable to modify valid message callback");
+		goto err;
+	}
+
+
+	err = nl_recvmsgs_default(sock);
+	if (err < 0) {
+		pr_err("Unable to receive message: %s", nl_geterror(err));
+		goto err;
+	}
 
 	exit_status = 0;
 err:
-	close(nl_sd);
+	nl_close(sock);
+	nl_socket_free(sock);
 	return exit_status;
 }
