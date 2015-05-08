@@ -399,12 +399,16 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	void *reply;
 	int err = 0, i = 0, n = 0;
 	bool progress = false;
+	int flags = 0;
 	u32 pid;
 
-	if (cb)
+	if (cb) {
 		n = cb->args[1];
+		flags |= NLM_F_MULTI;
+	}
 
-	reply = genlmsg_put(skb, portid, seq, &taskstats_family, 0, TASK_DIAG_CMD_GET);
+	reply = genlmsg_put(skb, portid, seq, &taskstats_family,
+					flags, TASK_DIAG_CMD_GET);
 	if (reply == NULL)
 		return -EMSGSIZE;
 
