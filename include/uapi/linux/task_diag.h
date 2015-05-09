@@ -142,6 +142,11 @@ static inline struct task_diag_vma_stat *task_diag_vma_stat(struct task_diag_vma
 	return ((void *)vma) + vma->stat_off;
 }
 
+#define task_diag_for_each_vma(vma, attr)				\
+	for (vma = NLA_DATA(attr);					\
+		(void *) vma < NLA_DATA(attr) + NLA_PAYLOAD(attr->nla_len); \
+		vma = (void *) vma + vma->vma_len)
+
 #define TASK_DIAG_DUMP_ALL	0
 #define TASK_DIAG_DUMP_CHILDREN	1
 #define TASK_DIAG_DUMP_THREAD	2
