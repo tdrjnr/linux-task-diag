@@ -437,21 +437,6 @@ const struct file_operations proc_tid_maps_operations = {
 #define PSS_SHIFT 12
 
 #ifdef CONFIG_PROC_PAGE_MONITOR
-struct mem_size_stats {
-	unsigned long resident;
-	unsigned long shared_clean;
-	unsigned long shared_dirty;
-	unsigned long private_clean;
-	unsigned long private_dirty;
-	unsigned long referenced;
-	unsigned long anonymous;
-	unsigned long anonymous_thp;
-	unsigned long swap;
-	unsigned long shared_hugetlb;
-	unsigned long private_hugetlb;
-	u64 pss;
-	u64 swap_pss;
-};
 
 static void smaps_account(struct mem_size_stats *mss, struct page *page,
 		unsigned long size, bool young, bool dirty)
@@ -542,7 +527,7 @@ static void smaps_pmd_entry(pmd_t *pmd, unsigned long addr,
 }
 #endif
 
-static int smaps_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
+int smaps_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
 			   struct mm_walk *walk)
 {
 	struct vm_area_struct *vma = walk->vma;

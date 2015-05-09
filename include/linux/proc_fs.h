@@ -92,4 +92,24 @@ struct tgid_iter next_tgid(struct pid_namespace *ns, struct tgid_iter iter);
 struct task_struct *
 task_next_child(struct task_struct *parent, struct task_struct *prev, unsigned int pos);
 
+struct mem_size_stats {
+	unsigned long resident;
+	unsigned long shared_clean;
+	unsigned long shared_dirty;
+	unsigned long private_clean;
+	unsigned long private_dirty;
+	unsigned long referenced;
+	unsigned long anonymous;
+	unsigned long anonymous_thp;
+	unsigned long swap;
+	unsigned long shared_hugetlb;
+	unsigned long private_hugetlb;
+	u64 pss;
+	u64 swap_pss;
+};
+
+struct mm_walk;
+int smaps_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
+			   struct mm_walk *walk);
+
 #endif /* _LINUX_PROC_FS_H */
