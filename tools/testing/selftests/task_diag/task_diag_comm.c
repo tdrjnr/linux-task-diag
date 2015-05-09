@@ -62,12 +62,13 @@ static int parse_cmd_new(struct nl_cache_ops *unused, struct genl_cmd *cmd,
 		int off = 0, size = NLA_PAYLOAD(attrs[TASK_DIAG_VMA]->nla_len);
 
 		while (off < size) {
-			char *name = "";
+			char *name;
 			vma = (struct task_diag_vma *) (((char *)NLA_DATA(attrs[TASK_DIAG_VMA])) + off);
-			if (vma->namelen)
-				name = vma->name;
+			name = task_diag_vma_name(vma);
+			if (name == NULL)
+				name = "";
 			pr_info("%016llx-%016llx %016llx %s\n", vma->start, vma->end, vma->vm_flags, name);
-			off += NLA_ALIGN(sizeof(struct task_diag_vma)) + NLA_ALIGN(vma->namelen);
+			off += NLA_ALIGN(vma->vma_len);
 		}
 	}
 

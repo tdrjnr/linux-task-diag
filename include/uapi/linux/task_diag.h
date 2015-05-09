@@ -104,10 +104,18 @@ struct task_diag_vma {
 	__u32 minor;
 	__u64 inode;
 	__u32 generation;
-	__u32 namelen;
-	/* name must be last */
-	char name[0];
+	__u16 vma_len;
+	__u16 name_off;
+	__u16 name_len;
 };
+
+static inline char *task_diag_vma_name(struct task_diag_vma *vma)
+{
+	if (!vma->name_len)
+		return NULL;
+
+	return ((char *)vma) + vma->name_off;
+}
 
 #define TASK_DIAG_DUMP_ALL	0
 #define TASK_DIAG_DUMP_CHILDREN	1

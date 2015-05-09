@@ -350,21 +350,24 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 		}
 
 		if (name) {
-			diag_vma->namelen = strlen(name) + 1;
+			diag_vma->name_len = strlen(name) + 1;
 
 			/* reserves NLA_ALIGN(len) */
-			pfile = nla_reserve_nohdr(skb, diag_vma->namelen);
+			pfile = nla_reserve_nohdr(skb, diag_vma->name_len);
 			if (pfile == NULL) {
 				nlmsg_trim(skb, b);
 				goto out;
 			}
-		} else
-			diag_vma->namelen = 0;
-
-		if (name)
-			memcpy(pfile, name, diag_vma->namelen);
+			diag_vma->name_off = pfile - (void *) diag_vma;
+			memcpy(pfile, name, diag_vma->name_len);
+		} else {
+			diag_vma->name_len = 0;
+			diag_vma->name_off = 0;
+		}
 
 		mark = vma->vm_start;
+
+		diag_vma->vma_len = skb_tail_pointer(skb) - (unsigned char *) diag_vma;
 
 		*progress = true;
 	}
