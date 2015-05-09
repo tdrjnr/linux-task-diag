@@ -11,6 +11,7 @@ enum {
 	TASK_DIAG_CRED,
 	TASK_DIAG_STAT,
 	TASK_DIAG_VMA,
+	TASK_DIAG_VMA_STAT,
 
 	/* other attributes */
 	TASK_DIAG_PID	= 64,	/* u32 */
@@ -23,6 +24,7 @@ enum {
 #define TASK_DIAG_SHOW_CRED	(1ULL << TASK_DIAG_CRED)
 #define TASK_DIAG_SHOW_STAT	(1ULL << TASK_DIAG_STAT)
 #define TASK_DIAG_SHOW_VMA	(1ULL << TASK_DIAG_VMA)
+#define TASK_DIAG_SHOW_VMA_STAT	(1ULL << TASK_DIAG_VMA_STAT)
 
 enum {
 	TASK_DIAG_RUNNING,
@@ -96,6 +98,19 @@ struct task_diag_creds {
 #define TASK_DIAG_VMA_F_NOHUGEPAGE	(1ULL << 26)
 #define TASK_DIAG_VMA_F_MERGEABLE	(1ULL << 27)
 
+struct task_diag_vma_stat {
+	__u64 resident;
+	__u64 shared_clean;
+	__u64 shared_dirty;
+	__u64 private_clean;
+	__u64 private_dirty;
+	__u64 referenced;
+	__u64 anonymous;
+	__u64 anonymous_thp;
+	__u64 swap;
+	__u64 pss;
+} __attribute__((__aligned__(NLA_ALIGNTO)));
+
 /* task_diag_vma must be NLA_ALIGN'ed */
 struct task_diag_vma {
 	__u64 start, end;
@@ -108,6 +123,8 @@ struct task_diag_vma {
 	__u16 vma_len;
 	__u16 name_off;
 	__u16 name_len;
+	__u16 stat_off;
+	__u16 stat_len;
 } __attribute__((__aligned__(NLA_ALIGNTO)));
 
 static inline char *task_diag_vma_name(struct task_diag_vma *vma)
@@ -116,6 +133,14 @@ static inline char *task_diag_vma_name(struct task_diag_vma *vma)
 		return NULL;
 
 	return ((char *)vma) + vma->name_off;
+}
+
+static inline struct task_diag_vma_stat *task_diag_vma_stat(struct task_diag_vma *vma)
+{
+	if (!vma->stat_len)
+		return NULL;
+
+	return ((void *)vma) + vma->stat_off;
 }
 
 #define TASK_DIAG_DUMP_ALL	0
