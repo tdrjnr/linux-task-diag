@@ -20,6 +20,7 @@ static struct nla_policy attr_policy[TASK_DIAG_ATTR_MAX + 1] = {
 	[TASK_DIAG_CRED] = { .minlen = sizeof(struct task_diag_creds) },
 };
 
+#define PSS_SHIFT 12
 static int parse_cmd_new(struct nl_cache_ops *unused, struct genl_cmd *cmd,
 			 struct genl_info *info, void *arg)
 {
@@ -62,10 +63,38 @@ static int parse_cmd_new(struct nl_cache_ops *unused, struct genl_cmd *cmd,
 
 		task_diag_for_each_vma(vma, attrs[TASK_DIAG_VMA]) {
 			char *name;
+			struct task_diag_vma_stat *stat;
+
 			name = task_diag_vma_name(vma);
 			if (name == NULL)
 				name = "";
+
 			pr_info("%016llx-%016llx %016llx %s\n", vma->start, vma->end, vma->vm_flags, name);
+
+			stat = task_diag_vma_stat(vma);
+			pr_info(
+				   "Size:           %8llu kB\n"
+				   "Rss:            %8llu kB\n"
+				   "Pss:            %8llu kB\n"
+				   "Shared_Clean:   %8llu kB\n"
+				   "Shared_Dirty:   %8llu kB\n"
+				   "Private_Clean:  %8llu kB\n"
+				   "Private_Dirty:  %8llu kB\n"
+				   "Referenced:     %8llu kB\n"
+				   "Anonymous:      %8llu kB\n"
+				   "AnonHugePages:  %8llu kB\n"
+				   "Swap:           %8llu kB\n",
+				   (vma->end - vma->start) >> 10,
+				   stat->resident >> 10,
+				   (stat->pss >> (10 + PSS_SHIFT)),
+				   stat->shared_clean  >> 10,
+				   stat->shared_dirty  >> 10,
+				   stat->private_clean >> 10,
+				   stat->private_dirty >> 10,
+				   stat->referenced >> 10,
+				   stat->anonymous >> 10,
+				   stat->anonymous_thp >> 10,
+				   stat->swap >> 10);
 		}
 	}
 

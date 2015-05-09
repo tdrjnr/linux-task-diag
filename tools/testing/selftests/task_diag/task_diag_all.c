@@ -33,7 +33,8 @@ int main(int argc, char *argv[])
 	void *hdr;
 	int err;
 
-	req.show_flags = TASK_DIAG_SHOW_BASE | TASK_DIAG_SHOW_CRED | TASK_DIAG_SHOW_VMA;
+	req.show_flags = TASK_DIAG_SHOW_BASE | TASK_DIAG_SHOW_CRED |
+				TASK_DIAG_SHOW_VMA | TASK_DIAG_SHOW_VMA_STAT;
 
 	if (argc < 2) {
 		pr_err("Usage: %s type pid", argv[0]);

@@ -41,7 +41,8 @@ int main(int argc, char *argv[])
 		pr_err("Usage: %s PID\n", argv[0]);
 		return 1;
 	}
-	req.show_flags = TASK_DIAG_SHOW_BASE | TASK_DIAG_SHOW_CRED | TASK_DIAG_SHOW_VMA;
+	req.show_flags = TASK_DIAG_SHOW_BASE | TASK_DIAG_SHOW_CRED |
+				TASK_DIAG_SHOW_VMA | TASK_DIAG_SHOW_VMA_STAT;
 
 	sock = nl_socket_alloc();
 	if (sock == NULL)
