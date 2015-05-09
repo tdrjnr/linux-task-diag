@@ -291,7 +291,31 @@ out:
 	return name;
 }
 
-static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_callback *cb, bool *progress)
+static void fill_diag_vma_stat(struct vm_area_struct *vma, struct task_diag_vma_stat *stat)
+{
+	struct mem_size_stats mss;
+	struct mm_walk smaps_walk = {
+		.pmd_entry = smaps_pte_range,
+		.mm = vma->vm_mm,
+		.private = &mss,
+	};
+
+	memset(&mss, 0, sizeof mss);
+	/* mmap_sem is held in m_start */
+	walk_page_vma(vma, &smaps_walk);
+
+	stat->resident		= mss.resident;
+	stat->pss		= mss.pss;
+	stat->shared_clean	= mss.shared_clean;
+	stat->private_clean	= mss.private_clean;
+	stat->private_dirty	= mss.private_dirty;
+	stat->referenced	= mss.referenced;
+	stat->anonymous		= mss.anonymous;
+	stat->anonymous_thp	= mss.anonymous_thp;
+	stat->swap		= mss.swap;
+}
+
+static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_callback *cb, bool *progress, u64 show_flags)
 {
 	struct vm_area_struct *vma;
 	struct mm_struct *mm;
@@ -299,7 +323,7 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 	struct task_diag_vma *diag_vma;
 	unsigned long mark = 0;
 	char *page;
-	int i, rc = -EMSGSIZE;
+	int i, rc = -EMSGSIZE, size;
 
 	if (cb)
 		mark = cb->args[2];
@@ -314,6 +338,10 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 		return -ENOMEM;
 	}
 
+	size = NLA_ALIGN(sizeof(struct task_diag_vma));
+	if (show_flags & TASK_DIAG_SHOW_VMA_STAT)
+		size += NLA_ALIGN(sizeof(struct task_diag_vma_stat));
+
 	down_read(&mm->mmap_sem);
 	for (vma = mm->mmap; vma; vma = vma->vm_next, i++) {
 		unsigned char *b = skb_tail_pointer(skb);
@@ -326,13 +354,13 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 
 		/* setup pointer for next map */
 		if (attr == NULL) {
-			attr = nla_reserve(skb, TASK_DIAG_VMA, sizeof(*diag_vma));
+			attr = nla_reserve(skb, TASK_DIAG_VMA, size);
 			if (!attr)
 				goto err;
 
 			diag_vma = nla_data(attr);
 		} else {
-			diag_vma = nla_reserve_nohdr(skb, sizeof(*diag_vma));
+			diag_vma = nla_reserve_nohdr(skb, size);
 
 			if (diag_vma == NULL) {
 				nlmsg_trim(skb, b);
@@ -341,6 +369,19 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 		}
 
 		fill_diag_vma(vma, diag_vma);
+
+		if (show_flags & TASK_DIAG_SHOW_VMA_STAT) {
+			struct task_diag_vma_stat *stat;
+
+			stat = (void *) diag_vma + NLA_ALIGN(sizeof(struct task_diag_vma));
+
+			fill_diag_vma_stat(vma, stat);
+			diag_vma->stat_len = sizeof(struct task_diag_vma_stat);
+			diag_vma->stat_off = (void *) stat - (void *)diag_vma;
+		} else {
+			diag_vma->stat_len = 0;
+			diag_vma->stat_off = 0;
+		}
 
 		name = get_vma_name(vma, page);
 		if (IS_ERR(name)) {
@@ -439,7 +480,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 
 	if (show_flags & TASK_DIAG_SHOW_VMA) {
 		if (i >= n)
-			err = fill_vma(tsk, skb, cb, &progress);
+			err = fill_vma(tsk, skb, cb, &progress, show_flags);
 		if (err)
 			goto err;
 		i++;

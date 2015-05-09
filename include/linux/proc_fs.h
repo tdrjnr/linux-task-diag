@@ -96,4 +96,21 @@ struct task_struct *task_first_tid(struct task_struct *task, int tid, loff_t f_p
 					struct pid_namespace *ns);
 struct task_struct *task_next_tid(struct task_struct *start);
 
+struct mem_size_stats {
+	unsigned long resident;
+	unsigned long shared_clean;
+	unsigned long shared_dirty;
+	unsigned long private_clean;
+	unsigned long private_dirty;
+	unsigned long referenced;
+	unsigned long anonymous;
+	unsigned long anonymous_thp;
+	unsigned long swap;
+	u64 pss;
+};
+
+struct mm_walk;
+int smaps_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end,
+			   struct mm_walk *walk);
+
 #endif /* _LINUX_PROC_FS_H */
