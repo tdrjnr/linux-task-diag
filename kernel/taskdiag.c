@@ -295,9 +295,8 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 {
 	struct vm_area_struct *vma;
 	struct mm_struct *mm;
-	struct nlattr *attr;
+	struct nlattr *attr = NULL;
 	struct task_diag_vma *diag_vma;
-	int len = 0;
 	unsigned long mark = 0;
 	char *page;
 	int i, rc = -EMSGSIZE;
@@ -315,12 +314,6 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 		return -ENOMEM;
 	}
 
-	attr = nla_reserve(skb, TASK_DIAG_VMA, sizeof(struct task_diag_vma));
-	if (!attr)
-		goto err;
-
-	diag_vma = nla_data(attr);
-
 	down_read(&mm->mmap_sem);
 	for (vma = mm->mmap; vma; vma = vma->vm_next, i++) {
 		unsigned char *b = skb_tail_pointer(skb);
@@ -332,7 +325,13 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 			continue;
 
 		/* setup pointer for next map */
-		if (diag_vma == NULL) {
+		if (attr == NULL) {
+			attr = nla_reserve(skb, TASK_DIAG_VMA, sizeof(*diag_vma));
+			if (!attr)
+				goto err;
+
+			diag_vma = nla_data(attr);
+		} else {
 			diag_vma = nla_reserve_nohdr(skb, sizeof(*diag_vma));
 
 			if (diag_vma == NULL) {
@@ -362,17 +361,10 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 		} else
 			diag_vma->namelen = 0;
 
-		len += sizeof(*diag_vma);
-
-		if (name) {
+		if (name)
 			memcpy(pfile, name, diag_vma->namelen);
-			len += NLA_ALIGN(diag_vma->namelen);
-		}
 
 		mark = vma->vm_start;
-
-		/* reset to reserve space on next pass if there is one */
-		diag_vma = NULL;
 
 		*progress = true;
 	}
@@ -380,7 +372,8 @@ static int fill_vma(struct task_struct *p, struct sk_buff *skb, struct netlink_c
 	rc = 0;
 	mark = 0;
 out:
-	attr->nla_len = nla_attr_size(len);
+	if (progress)
+		attr->nla_len = skb_tail_pointer(skb) - (unsigned char *) attr;
 
 err:
 	up_read(&mm->mmap_sem);
