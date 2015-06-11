@@ -443,9 +443,10 @@ err:
 }
 
 static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
-				u64 show_flags, u32 portid, u32 seq,
-				struct netlink_callback *cb)
+			  struct task_diag_pid *req, u32 portid, u32 seq,
+			  struct netlink_callback *cb)
 {
+	u64 show_flags = req->show_flags;
 	void *reply;
 	int err = 0, i = 0, n = 0;
 	bool progress = false;
@@ -492,6 +493,13 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	}
 
 	if (show_flags & TASK_DIAG_SHOW_VMA) {
+		/* if the request is to dump all threads of all processes
+		 * only show VMAs for group leader.
+		 */
+		if (req->dump_strategy == TASK_DIAG_DUMP_ALL_THREAD &&
+		    !thread_group_leader(tsk))
+			goto done;
+
 		if (i >= n)
 			err = fill_vma(tsk, skb, cb, &progress, show_flags);
 		if (err)
@@ -499,6 +507,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 		i++;
 	}
 
+done:
 	genlmsg_end(skb, reply);
 	if (cb)
 		cb->args[2] = 0;
@@ -696,7 +705,7 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 	for (; task; task = iter_next(&iter)) {
 		if (!ptrace_may_access(task, PTRACE_MODE_READ))
 			continue;
-		rc = task_diag_fill(task, skb, iter.req.show_flags,
+		rc = task_diag_fill(task, skb, &iter.req,
 				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq, cb);
 		if (rc < 0) {
 			if (rc != -EMSGSIZE) {
@@ -755,7 +764,7 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 			return -EMSGSIZE;
 		}
 
-		rc = task_diag_fill(tsk, msg, req.show_flags,
+		rc = task_diag_fill(tsk, msg, &req,
 					info->snd_portid, info->snd_seq, NULL);
 		if (rc != -EMSGSIZE)
 			break;
