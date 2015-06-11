@@ -149,9 +149,10 @@ static inline struct task_diag_vma_stat *task_diag_vma_stat(struct task_diag_vma
 		vma = (void *) vma + vma->vma_len)
 
 #define TASK_DIAG_DUMP_ALL	0
-#define TASK_DIAG_DUMP_CHILDREN	1
-#define TASK_DIAG_DUMP_THREAD	2
-#define TASK_DIAG_DUMP_ONE	3
+#define TASK_DIAG_DUMP_ALL_THREAD	1
+#define TASK_DIAG_DUMP_CHILDREN	2
+#define TASK_DIAG_DUMP_THREAD	3
+#define TASK_DIAG_DUMP_ONE	4
 
 struct task_diag_pid {
 	__u64	show_flags;
