@@ -521,13 +521,9 @@ struct task_iter {
 	struct netlink_callback *cb;
 	struct task_struct *parent;
 
-	union {
-		struct tgid_iter tgid;
-		struct {
-			unsigned int		pos;
-			struct task_struct	*task;
-		};
-	};
+	struct tgid_iter tgid;
+	unsigned int		pos;
+	struct task_struct	*task;
 };
 
 static void iter_stop(struct task_iter *iter)
@@ -539,6 +535,12 @@ static void iter_stop(struct task_iter *iter)
 
 	switch (iter->req.dump_strategy) {
 	case TASK_DIAG_DUMP_ALL:
+		task = iter->tgid.task;
+		break;
+	case TASK_DIAG_DUMP_ALL_THREAD:
+		/* release both tgid task and thread task */
+		if (iter->task)
+			put_task_struct(iter->task);
 		task = iter->tgid.task;
 		break;
 	default:
@@ -590,6 +592,25 @@ static struct task_struct *iter_start(struct task_iter *iter)
 		iter->tgid.task = NULL;
 		iter->tgid = next_tgid(iter->ns, iter->tgid);
 		return iter->tgid.task;
+
+	case TASK_DIAG_DUMP_ALL_THREAD:
+		iter->pos = iter->cb->args[1];
+		iter->tgid.tgid = iter->cb->args[0];
+		iter->tgid.task = NULL;
+		iter->tgid = next_tgid(iter->ns, iter->tgid);
+		if (!iter->tgid.task)
+			return NULL;
+
+		iter->task = task_first_tid(iter->tgid.task, 0, iter->pos, iter->ns);
+		if (!iter->task) {
+			iter->pos = 0;
+			iter->tgid.tgid += 1;
+			iter->tgid = next_tgid(iter->ns, iter->tgid);
+			iter->task = iter->tgid.task;
+			if (iter->task)
+				get_task_struct(iter->task);
+		}
+		return iter->task;
 	}
 
 	return ERR_PTR(-EINVAL);
@@ -622,6 +643,24 @@ static struct task_struct *iter_next(struct task_iter *iter)
 		iter->tgid = next_tgid(iter->ns, iter->tgid);
 		iter->cb->args[0] = iter->tgid.tgid;
 		return iter->tgid.task;
+
+	case TASK_DIAG_DUMP_ALL_THREAD:
+		iter->pos++;
+		iter->task = task_next_tid(iter->task);
+		if (!iter->task) {
+			iter->pos = 0;
+			iter->tgid.tgid += 1;
+			iter->tgid = next_tgid(iter->ns, iter->tgid);
+			iter->task = iter->tgid.task;
+			if (iter->task)
+				get_task_struct(iter->task);
+		}
+
+		/* save current position */
+		iter->cb->args[0] = iter->tgid.tgid;
+		iter->cb->args[1] = iter->pos;
+
+		return iter->task;
 	}
 
 	return NULL;
@@ -647,6 +686,8 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 	iter.ns     = ns;
 	iter.cb     = cb;
 	iter.parent = NULL;
+	iter.pos    = 0;
+	iter.task   = NULL;
 
 	task = iter_start(&iter);
 	if (IS_ERR(task))
