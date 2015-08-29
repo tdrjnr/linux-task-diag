@@ -9,9 +9,11 @@
 #include <linux/taskstats.h>
 
 struct task_diag_cb {
-	pid_t	pid;
-	int	pos;
-	int	attr;
+	struct pid_namespace	*ns;
+	pid_t			pid;
+	int			pos;
+	int			attr;
+
 	union { /* per-attribute */
 		struct {
 			unsigned long mark;
@@ -77,9 +79,8 @@ static inline const __u8 get_task_state(struct task_struct *tsk)
 	return task_state_array[fls(state)];
 }
 
-static int fill_task_base(struct task_struct *p, struct sk_buff *skb)
+static int fill_task_base(struct task_struct *p, struct sk_buff *skb, struct pid_namespace *ns)
 {
-	struct pid_namespace *ns = task_active_pid_ns(current);
 	struct task_diag_base *base;
 	struct nlattr *attr;
 	char tcomm[sizeof(p->comm)];
@@ -459,6 +460,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 			  struct task_diag_cb *cb)
 {
 	u64 show_flags = req->show_flags;
+	struct pid_namespace *ns;
 	void *reply;
 	int err = 0, i = 0, n = 0;
 	bool progress = false;
@@ -468,26 +470,28 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	if (cb) {
 		n = cb->attr;
 		flags |= NLM_F_MULTI;
-	}
+		ns = cb->ns;
+	} else
+		ns = task_active_pid_ns(current);
 
 	reply = genlmsg_put(skb, portid, seq, &taskstats_family,
 					flags, TASK_DIAG_CMD_GET);
 	if (reply == NULL)
 		return -EMSGSIZE;
 
-	pid = task_pid_vnr(tsk);
+	pid = task_pid_nr_ns(tsk, ns);
 	err = nla_put_u32(skb, TASK_DIAG_PID, pid);
 	if (err)
 		goto err;
 
-	tgid = task_tgid_vnr(tsk);
+	tgid = task_tgid_nr_ns(tsk, ns);
 	err = nla_put_u32(skb, TASK_DIAG_TGID, tgid);
 	if (err)
 		goto err;
 
 	if (show_flags & TASK_DIAG_SHOW_BASE) {
 		if (i >= n)
-			err = fill_task_base(tsk, skb);
+			err = fill_task_base(tsk, skb, ns);
 		if (err)
 			goto err;
 		i++;
@@ -543,7 +547,6 @@ err:
 
 struct task_iter {
 	struct task_diag_pid req;
-	struct pid_namespace *ns;
 	struct task_diag_cb *cb;
 	struct task_struct *parent;
 
@@ -578,9 +581,11 @@ static void iter_stop(struct task_iter *iter)
 
 static struct task_struct *iter_start(struct task_iter *iter)
 {
+	struct pid_namespace *ns = iter->cb->ns;
+
 	if (iter->req.pid > 0) {
 		rcu_read_lock();
-		iter->parent = find_task_by_pid_ns(iter->req.pid, iter->ns);
+		iter->parent = find_task_by_pid_ns(iter->req.pid, ns);
 		if (iter->parent)
 			get_task_struct(iter->parent);
 		rcu_read_unlock();
@@ -602,7 +607,7 @@ static struct task_struct *iter_start(struct task_iter *iter)
 			return ERR_PTR(-ESRCH);
 
 		iter->pos = iter->cb->pos;
-		iter->task = task_first_tid(iter->parent, 0, iter->pos, iter->ns);
+		iter->task = task_first_tid(iter->parent, 0, iter->pos, ns);
 		return iter->task;
 
 	case TASK_DIAG_DUMP_CHILDREN:
@@ -616,22 +621,22 @@ static struct task_struct *iter_start(struct task_iter *iter)
 	case TASK_DIAG_DUMP_ALL:
 		iter->tgid.tgid = iter->cb->pid;
 		iter->tgid.task = NULL;
-		iter->tgid = next_tgid(iter->ns, iter->tgid);
+		iter->tgid = next_tgid(ns, iter->tgid);
 		return iter->tgid.task;
 
 	case TASK_DIAG_DUMP_ALL_THREAD:
 		iter->pos = iter->cb->pos;
 		iter->tgid.tgid = iter->cb->pid;
 		iter->tgid.task = NULL;
-		iter->tgid = next_tgid(iter->ns, iter->tgid);
+		iter->tgid = next_tgid(ns, iter->tgid);
 		if (!iter->tgid.task)
 			return NULL;
 
-		iter->task = task_first_tid(iter->tgid.task, 0, iter->pos, iter->ns);
+		iter->task = task_first_tid(iter->tgid.task, 0, iter->pos, ns);
 		if (!iter->task) {
 			iter->pos = 0;
 			iter->tgid.tgid += 1;
-			iter->tgid = next_tgid(iter->ns, iter->tgid);
+			iter->tgid = next_tgid(ns, iter->tgid);
 			iter->task = iter->tgid.task;
 			if (iter->task)
 				get_task_struct(iter->task);
@@ -644,6 +649,8 @@ static struct task_struct *iter_start(struct task_iter *iter)
 
 static struct task_struct *iter_next(struct task_iter *iter)
 {
+	struct pid_namespace *ns = iter->cb->ns;
+
 	switch (iter->req.dump_strategy) {
 	case TASK_DIAG_DUMP_ONE:
 		iter->pos++;
@@ -656,7 +663,7 @@ static struct task_struct *iter_next(struct task_iter *iter)
 		iter->pos++;
 		iter->task = task_next_tid(iter->task);
 		iter->cb->pos = iter->pos;
-		iter->cb->pid = task_pid_nr_ns(iter->task, iter->ns);
+		iter->cb->pid = task_pid_nr_ns(iter->task, ns);
 		return iter->task;
 	case TASK_DIAG_DUMP_CHILDREN:
 		iter->pos++;
@@ -666,7 +673,7 @@ static struct task_struct *iter_next(struct task_iter *iter)
 
 	case TASK_DIAG_DUMP_ALL:
 		iter->tgid.tgid += 1;
-		iter->tgid = next_tgid(iter->ns, iter->tgid);
+		iter->tgid = next_tgid(ns, iter->tgid);
 		iter->cb->pid = iter->tgid.tgid;
 		return iter->tgid.task;
 
@@ -676,7 +683,7 @@ static struct task_struct *iter_next(struct task_iter *iter)
 		if (!iter->task) {
 			iter->pos = 0;
 			iter->tgid.tgid += 1;
-			iter->tgid = next_tgid(iter->ns, iter->tgid);
+			iter->tgid = next_tgid(ns, iter->tgid);
 			iter->task = iter->tgid.task;
 			if (iter->task)
 				get_task_struct(iter->task);
@@ -692,9 +699,17 @@ static struct task_struct *iter_next(struct task_iter *iter)
 	return NULL;
 }
 
+int taskdiag_done(struct netlink_callback *cb)
+{
+	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb->args;
+
+	put_pid_ns(diag_cb->ns);
+
+	return 0;
+}
+
 int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 {
-	struct pid_namespace *ns = task_active_pid_ns(current);
 	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb->args;
 	struct task_iter iter;
 	struct nlattr *na;
@@ -710,9 +725,11 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 	if (na->nla_type < 0)
 		return -EINVAL;
 
+	if (diag_cb->ns == NULL)
+		diag_cb->ns = get_pid_ns(task_active_pid_ns(current));
+
 	memcpy(&iter.req, nla_data(na), sizeof(iter.req));
 
-	iter.ns     = ns;
 	iter.cb     = diag_cb;
 	iter.parent = NULL;
 	iter.pos    = 0;
