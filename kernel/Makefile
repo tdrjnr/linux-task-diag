@@ -104,7 +104,7 @@ obj-$(CONFIG_MEMBARRIER) += membarrier.o
 
 obj-$(CONFIG_HAS_IOMEM) += memremap.o
 
-obj-$(CONFIG_TASK_DIAG) += taskdiag.o
+obj-$(CONFIG_TASK_DIAG) += task_diag.o
 
 $(obj)/configs.o: $(obj)/config_data.h
 
