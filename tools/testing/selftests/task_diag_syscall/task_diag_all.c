@@ -62,7 +62,7 @@ int main(int argc, char *argv[])
 	while (1) {
 		int err;
 
-		rep_len = syscall(__NR_taskdiag, &pid_req, sizeof(pid_req), buf, 128);
+		rep_len = syscall(__NR_taskdiag, &pid_req, sizeof(pid_req), buf, 256);
 //		rep_len = recv(nl_sd, buf, sizeof(buf), 0);
 		pr_info("received %d bytes\n", rep_len);
 

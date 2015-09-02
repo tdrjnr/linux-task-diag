@@ -736,32 +736,28 @@ SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
 	struct task_iter iter;
 	struct task_struct *task;
 	struct sk_buff *skb;
-	struct netlink_callback cb = {};
+	struct netlink_callback cb = {}, cb_prev;
 	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb.args;
+	size_t off = 0;
 	int rc = -ESRCH;
 
-	printk("%s:%d\n", __func__, __LINE__);
 	if (req_size < sizeof(struct task_diag_pid))
 		return -EINVAL;
 
-	printk("%s:%d\n", __func__, __LINE__);
 	if (copy_from_user(&req, ureq, req_size))
 		return -EFAULT;
 
-	printk("%s:%d %ld\n", __func__, __LINE__, resp_size);
 	skb = alloc_skb(resp_size, GFP_KERNEL);
 	if (!skb)
 		return -EMSGSIZE;
 
 	memcpy(cb.args, req.args, sizeof(cb.args));
-        printk("%lx %lx %lx %lx %lx %lx\n", cb.args[0], cb.args[1], cb.args[2], cb.args[3], cb.args[4], cb.args[5]);
-
-	attr = task_diag_fill_attr(skb, &cb);
+        printk("start %lx %lx %lx %lx %lx %lx\n", cb.args[0], cb.args[1], cb.args[2], cb.args[3], cb.args[4], cb.args[5]);
 
 	memcpy(&iter.req, &req, sizeof(iter.req));
 	iter.cb  = diag_cb;
 	if (diag_cb->ns == NULL)
-		diag_cb->ns = get_pid_ns(task_active_pid_ns(current));
+		diag_cb->ns = task_active_pid_ns(current);
 
 	task = iter_start(&iter);
 	if (IS_ERR(task))
@@ -778,37 +774,62 @@ SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
 			put_task_struct(task);
 			if (rc != -EMSGSIZE)
 				goto err;
-			goto out;
 		}
-		printk("%s:%d\n", __func__, __LINE__);
+
+		if (off + skb->len > resp_size - 50) //cb
+			goto out;
+
+		if (copy_to_user(uresp + off, skb->data, skb->len)) {
+			rc = -EFAULT;
+			goto err;
+		}
+		off += skb->len;
+		printk("%s:%d: %d\n", __func__, __LINE__, skb->len);
+		skb_trim(skb, 0);
+		memcpy(cb_prev.args, cb.args, sizeof(cb.args));
+
+		if (rc < 0)
+			goto out;
 	}
 
-//	if (skb->len > resp_size)
-//		return -EMSGSIZE; // FIXME
+	skb_trim(skb, 0);
 	{
 		struct nlmsghdr *nlh;
 		nlh = nlmsg_put(skb, 0, 0,
 			 NLMSG_DONE, 0, NLM_F_MULTI);
-		printk("%s:%d\n", __func__, __LINE__);
 		if (!nlh) {
-			printk("%s:%d\n", __func__, __LINE__);
 			rc = -EMSGSIZE;
 			goto err;
 		}
 	}
-out:
-	if (rc == 0 || rc == -EMSGSIZE) {
-		memcpy(nla_data(attr), cb.args, sizeof(cb.args));
-                printk("%lx %lx %lx %lx %lx %lx\n", cb.args[0], cb.args[1], cb.args[2], cb.args[3], cb.args[4], cb.args[5]);
-
-		rc = skb->len;
-		if (copy_to_user(uresp, skb->data, skb->len))
-			rc = -EFAULT;
+	if (copy_to_user(uresp + off, skb->data, skb->len)) {
+		rc = -EFAULT;
+		goto err;
 	}
+	off += skb->len;
+	rc = off;
+	goto err;
+out:
+	skb_trim(skb, 0);
+	printk("%s:%d: %d\n", __func__, __LINE__, skb->len);
+	attr = task_diag_fill_attr(skb, &cb);
+	if (attr == NULL) {
+		rc = -EMSGSIZE;
+		goto err;
+	}
+	memcpy(cb.args, cb_prev.args, sizeof(cb.args));
+        printk("end %lx %lx %lx %lx %lx %lx\n", cb.args[0], cb.args[1], cb.args[2], cb.args[3], cb.args[4], cb.args[5]);
+	memcpy(nla_data(attr), cb_prev.args, sizeof(cb.args));
+	if (copy_to_user(uresp + off, skb->data, skb->len)) {
+		rc = -EFAULT;
+		goto err;
+	}
+	off += skb->len;
+	printk("%s:%d: %d\n", __func__, __LINE__, skb->len);
+
+	rc = off;
 err:
 	nlmsg_free(skb);
-
-	printk("%s:%d\n", __func__, __LINE__);
 	return rc;
 }
 
