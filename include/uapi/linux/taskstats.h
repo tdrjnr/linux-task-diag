@@ -182,6 +182,7 @@ enum {
 	CGROUPSTATS_CMD_NEW,		/* kernel->user event */
 
 	TASK_DIAG_CMD_GET,
+	TASK_DIAG_CMD_CURSOR,
 
 	__TASKSTATS_CMD_MAX,
 };

@@ -7,52 +7,21 @@
 #include <linux/proc_fs.h>
 #include <linux/sched.h>
 #include <linux/taskstats.h>
+#include <linux/syscalls.h>
 
 struct task_diag_cb {
-	struct pid_namespace	*ns;
 	pid_t			pid;
 	int			pos;
 	int			attr;
+	int			pad1;
 
 	union { /* per-attribute */
 		struct {
 			unsigned long mark;
 		} vma;
+		long pad[4];
 	};
 };
-
-static size_t taskdiag_packet_size(u64 show_flags, int n_vma)
-{
-	size_t size;
-
-	size = nla_total_size(sizeof(u32)); /* PID */
-	       + nla_total_size(sizeof(u32)); /* TGID */
-
-	if (show_flags & TASK_DIAG_SHOW_BASE)
-		size += nla_total_size(sizeof(struct task_diag_base));
-
-	if (show_flags & TASK_DIAG_SHOW_CRED)
-		size += nla_total_size(sizeof(struct task_diag_creds));
-
-	if (show_flags & TASK_DIAG_SHOW_STAT)
-		size += nla_total_size(sizeof(struct taskstats));
-
-	if (show_flags & TASK_DIAG_SHOW_VMA && n_vma > 0) {
-		size_t entry_size;
-
-		/*
-		 * 128 is a schwag on average path length for maps; used to
-		 * ballpark initial memory allocation for genl msg
-		 */
-		entry_size = sizeof(struct task_diag_vma) + 128;
-
-		if (show_flags & TASK_DIAG_SHOW_VMA_STAT)
-			entry_size += sizeof(struct task_diag_vma_stat);
-		size += nla_total_size(entry_size * n_vma);
-	}
-
-	return size;
-}
 
 /*
  * The task state array is a strange "bitmap" of
@@ -228,24 +197,6 @@ static u64 get_vma_flags(struct vm_area_struct *vma)
 	}
 
 	return flags;
-}
-
-static int task_vma_num(struct mm_struct *mm)
-{
-	struct vm_area_struct *vma;
-	int n_vma = 0;
-
-	if (!mm || !atomic_inc_not_zero(&mm->mm_users))
-		return 0;
-
-	down_read(&mm->mmap_sem);
-	for (vma = mm->mmap; vma; vma = vma->vm_next, n_vma++)
-		;
-
-	up_read(&mm->mmap_sem);
-	mmput(mm);
-
-	return n_vma;
 }
 
 /*
@@ -467,12 +418,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	int flags = 0;
 	u32 pid, tgid;
 
-	if (cb) {
-		n = cb->attr;
-		flags |= NLM_F_MULTI;
-		ns = cb->ns;
-	} else
-		ns = task_active_pid_ns(current);
+	ns = task_active_pid_ns(current);
 
 	reply = genlmsg_put(skb, portid, seq, &taskstats_family,
 					flags, TASK_DIAG_CMD_GET);
@@ -581,7 +527,7 @@ static void iter_stop(struct task_iter *iter)
 
 static struct task_struct *iter_start(struct task_iter *iter)
 {
-	struct pid_namespace *ns = iter->cb->ns;
+	struct pid_namespace *ns = task_active_pid_ns(current);
 
 	if (iter->req.pid > 0) {
 		rcu_read_lock();
@@ -649,7 +595,7 @@ static struct task_struct *iter_start(struct task_iter *iter)
 
 static struct task_struct *iter_next(struct task_iter *iter)
 {
-	struct pid_namespace *ns = iter->cb->ns;
+	struct pid_namespace *ns = task_active_pid_ns(current);
 
 	switch (iter->req.dump_strategy) {
 	case TASK_DIAG_DUMP_ONE:
@@ -699,122 +645,131 @@ static struct task_struct *iter_next(struct task_iter *iter)
 	return NULL;
 }
 
-int taskdiag_done(struct netlink_callback *cb)
+static struct nlattr *task_diag_fill_attr(struct sk_buff *skb,
+				struct task_diag_cb *args)
 {
-	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb->args;
+	struct nlattr *attr;
+	void *reply;
 
-	put_pid_ns(diag_cb->ns);
+	reply = genlmsg_put(skb, 0, 0, &taskstats_family, 0, TASK_DIAG_CMD_GET);
+	if (reply == NULL)
+		return NULL;
 
-	return 0;
+	attr = nla_reserve(skb, TASK_DIAG_ARGS, sizeof(*args));
+
+	genlmsg_end(skb, reply);
+
+	return attr;
 }
 
-int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
+SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
+		size_t, req_size, char __user *, uresp,
+		size_t, resp_size)
 {
-	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb->args;
-	struct task_iter iter;
-	struct nlattr *na;
+	struct nlattr *attr;
+	char buf[128];
 	struct task_struct *task;
-	int rc;
+	struct task_iter iter = {};
+	struct sk_buff *skb;
+	struct task_diag_cb prev_args = {}, diag_args = {};
+	size_t off = 0;
+	int size = req_size;
+	int rc = -ESRCH;
 
-	BUILD_BUG_ON(sizeof(struct task_diag_cb) > sizeof(cb->args));
-
-	if (nlmsg_len(cb->nlh) < GENL_HDRLEN + sizeof(iter.req))
+	if (req_size < nla_total_size(sizeof(struct task_diag_pid))
+			+ nla_total_size(sizeof(long[6])))
 		return -EINVAL;
+	if (req_size > sizeof(buf))
+		return -EMSGSIZE;
+	if (copy_from_user(&buf, ureq, req_size))
+		return -EFAULT;
 
-	na = nlmsg_data(cb->nlh) + GENL_HDRLEN;
-	if (na->nla_type < 0)
+	attr = (void *) buf;
+	if (nla_type(attr) != TASK_DIAG_CMD_GET)
 		return -EINVAL;
+	if (nla_len(attr) != sizeof(iter.req))
+		return -EINVAL;
+	memcpy(&iter.req, nla_data(attr), nla_len(attr));
 
-	if (diag_cb->ns == NULL)
-		diag_cb->ns = get_pid_ns(task_active_pid_ns(current));
+	attr = nla_next(attr, &size);
+	if (nla_type(attr) != TASK_DIAG_CMD_CURSOR)
+		return -EINVAL;
+	if (nla_len(attr) != sizeof(diag_args))
+		return -EINVAL;
+	memcpy(&diag_args, nla_data(attr), nla_len(attr));
 
-	memcpy(&iter.req, nla_data(na), sizeof(iter.req));
+	skb = alloc_skb(resp_size, GFP_KERNEL);
+	if (!skb)
+		return -EMSGSIZE;
 
-	iter.cb     = diag_cb;
-	iter.parent = NULL;
-	iter.pos    = 0;
-	iter.task   = NULL;
+	iter.cb  = &diag_args;
 
 	task = iter_start(&iter);
 	if (IS_ERR(task))
 		return PTR_ERR(task);
 
+	rc = 0;
 	for (; task; task = iter_next(&iter)) {
 		if (!ptrace_may_access(task, PTRACE_MODE_READ))
 			continue;
+
 		rc = task_diag_fill(task, skb, &iter.req,
-				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq, diag_cb);
+				0, 0, &diag_args);
 		if (rc < 0) {
-			if (rc != -EMSGSIZE) {
-				iter_stop(&iter);
-				return rc;
-			}
-			break;
+			put_task_struct(task);
+			if (rc != -EMSGSIZE)
+				goto err;
+		}
+
+		if (off + skb->len > resp_size - nla_total_size(sizeof(diag_args)))
+			goto out;
+
+		if (copy_to_user(uresp + off, skb->data, skb->len)) {
+			rc = -EFAULT;
+			goto err;
+		}
+		off += skb->len;
+		skb_trim(skb, 0);
+		memcpy(&prev_args, &diag_args, sizeof(prev_args));
+
+		if (rc < 0)
+			goto out;
+	}
+
+	skb_trim(skb, 0);
+	{
+		struct nlmsghdr *nlh;
+		nlh = nlmsg_put(skb, 0, 0,
+			 NLMSG_DONE, 0, NLM_F_MULTI);
+		if (!nlh) {
+			rc = -EMSGSIZE;
+			goto err;
 		}
 	}
+	if (copy_to_user(uresp + off, skb->data, skb->len)) {
+		rc = -EFAULT;
+		goto err;
+	}
+	off += skb->len;
+	rc = off;
+	goto err;
+out:
+	skb_trim(skb, 0);
+	attr = task_diag_fill_attr(skb, &diag_args);
+	if (attr == NULL) {
+		rc = -EMSGSIZE;
+		goto err;
+	}
+	memcpy(nla_data(attr), &prev_args, sizeof(prev_args));
+	if (copy_to_user(uresp + off, skb->data, skb->len)) {
+		rc = -EFAULT;
+		goto err;
+	}
+	off += skb->len;
+
+	rc = off;
+err:
 	iter_stop(&iter);
-
-	return skb->len;
-}
-
-int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
-{
-	struct nlattr *nla = info->attrs[TASK_DIAG_CMD_ATTR_GET];
-	struct task_struct *tsk = NULL;
-	struct task_diag_pid req;
-	struct sk_buff *msg = NULL;
-	size_t size;
-	int rc;
-
-	if (!nla_data(nla))
-		return -EINVAL;
-
-	if (nla_len(nla) < sizeof(req))
-		return -EINVAL;
-
-	/*
-	 * use a req variable to deal with alignment issues. task_diag_pid
-	 * contains u64 elements which means extended load operations can be
-	 * used and those can require 8-byte alignment (e.g., sparc)
-	 */
-	memcpy(&req, nla_data(nla), sizeof(req));
-
-	rcu_read_lock();
-	tsk = find_task_by_vpid(req.pid);
-	if (tsk)
-		get_task_struct(tsk);
-	rcu_read_unlock();
-	if (!tsk)
-		return -ESRCH;
-
-	if (!ptrace_may_access(tsk, PTRACE_MODE_READ)) {
-		put_task_struct(tsk);
-		return -EPERM;
-	}
-
-	size = taskdiag_packet_size(req.show_flags, task_vma_num(tsk->mm));
-
-	while (1) {
-		msg = genlmsg_new(size, GFP_KERNEL);
-		if (!msg) {
-			put_task_struct(tsk);
-			return -EMSGSIZE;
-		}
-
-		rc = task_diag_fill(tsk, msg, &req,
-					info->snd_portid, info->snd_seq, NULL);
-		if (rc != -EMSGSIZE)
-			break;
-
-		nlmsg_free(msg);
-		size += 128;
-	}
-
-	put_task_struct(tsk);
-	if (rc < 0) {
-		nlmsg_free(msg);
-		return rc;
-	}
-
-	return genlmsg_reply(msg, info);
+	nlmsg_free(skb);
+	return rc;
 }
