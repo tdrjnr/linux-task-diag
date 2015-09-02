@@ -7,6 +7,7 @@
 #include <linux/proc_fs.h>
 #include <linux/sched.h>
 #include <linux/taskstats.h>
+#include <linux/syscalls.h>
 
 struct task_diag_cb {
 	struct pid_namespace	*ns;
@@ -706,6 +707,109 @@ int taskdiag_done(struct netlink_callback *cb)
 	put_pid_ns(diag_cb->ns);
 
 	return 0;
+}
+
+static struct nlattr *task_diag_fill_attr(struct sk_buff *skb,
+				struct netlink_callback *cb)
+{
+	struct nlattr *attr;
+	void *reply;
+
+	printk("%s:%d\n", __func__, __LINE__);
+	reply = genlmsg_put(skb, 0, 0, &taskstats_family, 0, TASK_DIAG_CMD_GET);
+	if (reply == NULL)
+		return NULL;
+
+	attr = nla_reserve(skb, TASK_DIAG_ARGS, sizeof(cb->args));
+	
+	genlmsg_end(skb, reply);
+
+	return attr;
+}
+
+SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
+		size_t, req_size, char __user *, uresp,
+		size_t, resp_size)
+{
+	struct nlattr *attr;
+	struct task_diag_pid req;
+	struct task_iter iter;
+	struct task_struct *task;
+	struct sk_buff *skb;
+	struct netlink_callback cb = {};
+	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb.args;
+	int rc = -ESRCH;
+
+	printk("%s:%d\n", __func__, __LINE__);
+	if (req_size < sizeof(struct task_diag_pid))
+		return -EINVAL;
+
+	printk("%s:%d\n", __func__, __LINE__);
+	if (copy_from_user(&req, ureq, req_size))
+		return -EFAULT;
+
+	printk("%s:%d %ld\n", __func__, __LINE__, resp_size);
+	skb = alloc_skb(resp_size, GFP_KERNEL);
+	if (!skb)
+		return -EMSGSIZE;
+
+	memcpy(cb.args, req.args, sizeof(cb.args));
+        printk("%lx %lx %lx %lx %lx %lx\n", cb.args[0], cb.args[1], cb.args[2], cb.args[3], cb.args[4], cb.args[5]);
+
+	attr = task_diag_fill_attr(skb, &cb);
+
+	memcpy(&iter.req, &req, sizeof(iter.req));
+	iter.cb  = diag_cb;
+	if (diag_cb->ns == NULL)
+		diag_cb->ns = get_pid_ns(task_active_pid_ns(current));
+
+	task = iter_start(&iter);
+	if (IS_ERR(task))
+		return PTR_ERR(task);
+
+	rc = 0;
+	for (; task; task = iter_next(&iter)) {
+		if (!ptrace_may_access(task, PTRACE_MODE_READ))
+			continue;
+
+		rc = task_diag_fill(task, skb, &iter.req,
+				0, 0, diag_cb);
+		if (rc < 0) {
+			put_task_struct(task);
+			if (rc != -EMSGSIZE)
+				goto err;
+			goto out;
+		}
+		printk("%s:%d\n", __func__, __LINE__);
+	}
+
+//	if (skb->len > resp_size)
+//		return -EMSGSIZE; // FIXME
+	{
+		struct nlmsghdr *nlh;
+		nlh = nlmsg_put(skb, 0, 0,
+			 NLMSG_DONE, 0, NLM_F_MULTI);
+		printk("%s:%d\n", __func__, __LINE__);
+		if (!nlh) {
+			printk("%s:%d\n", __func__, __LINE__);
+			rc = -EMSGSIZE;
+			goto err;
+		}
+	}
+out:
+	if (rc == 0 || rc == -EMSGSIZE) {
+		memcpy(nla_data(attr), cb.args, sizeof(cb.args));
+                printk("%lx %lx %lx %lx %lx %lx\n", cb.args[0], cb.args[1], cb.args[2], cb.args[3], cb.args[4], cb.args[5]);
+
+		rc = skb->len;
+		if (copy_to_user(uresp, skb->data, skb->len))
+			rc = -EFAULT;
+	}
+err:
+	nlmsg_free(skb);
+
+	printk("%s:%d\n", __func__, __LINE__);
+	return rc;
 }
 
 int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)

@@ -16,6 +16,7 @@ enum {
 	/* other attributes */
 	TASK_DIAG_PID	= 64,	/* u32 */
 	TASK_DIAG_TGID,		/* u32 */
+	TASK_DIAG_ARGS,		/* u32 */
 
 	__TASK_DIAG_ATTR_MAX
 #define TASK_DIAG_ATTR_MAX (__TASK_DIAG_ATTR_MAX - 1)
@@ -160,6 +161,8 @@ struct task_diag_pid {
 	__u64	dump_strategy;
 
 	__u32	pid;
+
+	long args[6];
 };
 
 enum {
