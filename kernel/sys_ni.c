@@ -219,6 +219,8 @@ cond_syscall(sys_eventfd);
 cond_syscall(sys_eventfd2);
 cond_syscall(sys_memfd_create);
 
+cond_syscall(sys_taskdiag);
+
 /* performance counters: */
 cond_syscall(sys_perf_event_open);
 
