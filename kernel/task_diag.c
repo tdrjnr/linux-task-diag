@@ -7,6 +7,7 @@
 #include <linux/proc_fs.h>
 #include <linux/sched.h>
 #include <linux/taskstats.h>
+#include <net/sock.h>
 
 struct task_diag_cb {
 	pid_t	pid;
@@ -142,9 +143,9 @@ static int fill_stats(struct task_struct *tsk, struct sk_buff *skb)
 	return 0;
 }
 
-static int fill_creds(struct task_struct *p, struct sk_buff *skb)
+static int fill_creds(struct task_struct *p, struct sk_buff *skb,
+					struct user_namespace *user_ns)
 {
-	struct user_namespace *user_ns = current_user_ns();
 	struct task_diag_creds *diag_cred;
 	const struct cred *cred;
 	struct nlattr *attr;
@@ -456,7 +457,8 @@ err:
 
 static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 			  struct task_diag_pid *req, u32 portid, u32 seq,
-			  struct task_diag_cb *cb)
+			  struct task_diag_cb *cb,
+			  struct user_namespace *userns)
 {
 	u64 show_flags = req->show_flags;
 	void *reply;
@@ -495,7 +497,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 
 	if (show_flags & TASK_DIAG_SHOW_CRED) {
 		if (i >= n)
-			err = fill_creds(tsk, skb);
+			err = fill_creds(tsk, skb, userns);
 		if (err)
 			goto err;
 		i++;
@@ -708,14 +710,23 @@ static struct task_struct *iter_next(struct task_iter *iter)
 	return NULL;
 }
 
+static bool task_diag_may_access(struct sk_buff *skb, struct task_struct *tsk)
+{
+	const struct cred *cred = NETLINK_CB(skb).sk->sk_socket->file->f_cred;
+
+	return !ptrace_cred_may_access(cred, tsk, PTRACE_MODE_READ);
+}
+
 int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 {
-	struct pid_namespace *ns = task_active_pid_ns(current);
 	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb->args;
+	struct user_namespace *userns;
 	struct task_iter iter;
 	struct nlattr *na;
 	struct task_struct *task;
 	int rc;
+
+	userns = NETLINK_CB(cb->skb).sk->sk_socket->file->f_cred->user_ns;
 
 	BUILD_BUG_ON(sizeof(struct task_diag_cb) > sizeof(cb->args));
 
@@ -739,10 +750,11 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 		return PTR_ERR(task);
 
 	for (; task; task = iter_next(&iter)) {
-		if (!ptrace_may_access(task, PTRACE_MODE_READ))
+		if (!task_diag_may_access(cb->skb, task))
 			continue;
 		rc = task_diag_fill(task, skb, &iter.req,
-				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq, diag_cb);
+				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq,
+				diag_cb, userns);
 		if (rc < 0) {
 			if (rc != -EMSGSIZE) {
 				iter_stop(&iter);
@@ -759,6 +771,7 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 {
 	struct nlattr *nla = info->attrs[TASK_DIAG_CMD_ATTR_GET];
+	struct user_namespace *userns;
 	struct task_struct *tsk = NULL;
 	struct task_diag_pid req;
 	struct sk_buff *msg = NULL;
@@ -786,10 +799,12 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 	if (!tsk)
 		return -ESRCH;
 
-	if (!ptrace_may_access(tsk, PTRACE_MODE_READ)) {
+	if (!task_diag_may_access(skb, tsk)) {
 		put_task_struct(tsk);
 		return -EPERM;
 	}
+
+	userns = NETLINK_CB(skb).sk->sk_socket->file->f_cred->user_ns;
 
 	size = taskdiag_packet_size(req.show_flags, task_vma_num(tsk->mm));
 
@@ -801,7 +816,8 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 		}
 
 		rc = task_diag_fill(tsk, msg, &req,
-					info->snd_portid, info->snd_seq, NULL);
+					info->snd_portid, info->snd_seq, NULL,
+					userns);
 		if (rc != -EMSGSIZE)
 			break;
 
