@@ -23,6 +23,7 @@ enum netlink_skb_flags {
 };
 
 struct netlink_skb_parms {
+	struct pid		*pid;
 	struct scm_creds	creds;		/* Skb credentials	*/
 	__u32			portid;
 	__u32			dst_group;
