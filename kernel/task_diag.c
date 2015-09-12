@@ -593,7 +593,7 @@ static struct task_struct *iter_start(struct task_iter *iter)
 		iter->pos = iter->cb->pos;
 		if (iter->pos == 0) {
 			iter->task = iter->parent;
-			get_task_struct(iter->task);
+			iter->parent = NULL;
 		} else
 			iter->task = NULL;
 		return iter->task;
