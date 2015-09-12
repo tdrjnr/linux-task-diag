@@ -85,6 +85,7 @@ struct listeners {
 #define NETLINK_F_RECV_NO_ENOBUFS	0x8
 #define NETLINK_F_LISTEN_ALL_NSID	0x10
 #define NETLINK_F_CAP_ACK		0x20
+#define NETLINK_F_SCM_PID		0x40
 
 static inline int netlink_is_kernel(struct sock *sk)
 {
@@ -876,6 +877,8 @@ static void netlink_skb_destructor(struct sk_buff *skb)
 	struct nl_mmap_hdr *hdr;
 	struct netlink_ring *ring;
 	struct sock *sk;
+
+	put_pid(NETLINK_CB(skb).pid);
 
 	/* If a packet from the kernel to userspace was freed because of an
 	 * error without being delivered to userspace, the kernel must reset
@@ -2269,6 +2272,13 @@ static int netlink_setsockopt(struct socket *sock, int level, int optname,
 			nlk->flags &= ~NETLINK_F_BROADCAST_SEND_ERROR;
 		err = 0;
 		break;
+	case NETLINK_SCM_PID:
+		if (val)
+			nlk->flags |= NETLINK_F_SCM_PID;
+		else
+			nlk->flags &= ~NETLINK_F_SCM_PID;
+		err = 0;
+		break;
 	case NETLINK_NO_ENOBUFS:
 		if (val) {
 			nlk->flags |= NETLINK_F_RECV_NO_ENOBUFS;
@@ -2490,6 +2500,8 @@ static int netlink_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
 	NETLINK_CB(skb).portid	= nlk->portid;
 	NETLINK_CB(skb).dst_group = dst_group;
 	NETLINK_CB(skb).creds	= scm.creds;
+	if (nlk->flags & NETLINK_F_SCM_PID)
+		NETLINK_CB(skb).pid  = get_pid(scm.pid);
 	NETLINK_CB(skb).flags	= netlink_skb_flags;
 
 	err = -EFAULT;
