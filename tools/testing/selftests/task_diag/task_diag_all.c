@@ -18,10 +18,19 @@
 #include <netlink/genl/ctrl.h>
 #include <netlink/genl/genl.h>
 #include <netlink/genl/mngt.h>
+#include <linux/socket.h>
 
 #include "task_diag.h"
 #include "taskstats.h"
 #include "task_diag_comm.h"
+
+#ifndef SOL_NETLINK
+#define SOL_NETLINK	270
+#endif
+
+#ifndef NETLINK_SCM_PID
+#define NETLINK_SCM_PID	11
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -89,6 +98,13 @@ int main(int argc, char *argv[])
 	id = genl_ctrl_resolve(sock, TASKSTATS_GENL_NAME);
 	if (id == GENL_ID_GENERATE)
 		return -1;
+
+
+	{
+		int val = 1;
+		if (setsockopt(nl_socket_get_fd(sock), SOL_NETLINK, NETLINK_SCM_PID, &val, sizeof(val)))
+			return -1;
+	}
 
 	msg = nlmsg_alloc();
 	if (msg == NULL) {

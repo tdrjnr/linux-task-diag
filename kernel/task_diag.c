@@ -78,9 +78,8 @@ static inline const __u8 get_task_state(struct task_struct *tsk)
 	return task_state_array[fls(state)];
 }
 
-static int fill_task_base(struct task_struct *p, struct sk_buff *skb)
+static int fill_task_base(struct task_struct *p, struct sk_buff *skb, struct pid_namespace *ns)
 {
-	struct pid_namespace *ns = task_active_pid_ns(current);
 	struct task_diag_base *base;
 	struct nlattr *attr;
 	char tcomm[sizeof(p->comm)];
@@ -457,7 +456,7 @@ err:
 
 static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 			  struct task_diag_pid *req, u32 portid, u32 seq,
-			  struct task_diag_cb *cb,
+			  struct task_diag_cb *cb, struct pid_namespace *pidns,
 			  struct user_namespace *userns)
 {
 	u64 show_flags = req->show_flags;
@@ -489,7 +488,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 
 	if (show_flags & TASK_DIAG_SHOW_BASE) {
 		if (i >= n)
-			err = fill_task_base(tsk, skb);
+			err = fill_task_base(tsk, skb, pidns);
 		if (err)
 			goto err;
 		i++;
@@ -721,11 +720,16 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb->args;
 	struct user_namespace *userns;
+	struct pid_namespace *pidns;
 	struct task_iter iter;
 	struct nlattr *na;
 	struct task_struct *task;
 	int rc;
 
+	if (NETLINK_CB(cb->skb).pid == NULL)
+		return -EINVAL;
+
+	pidns  = ns_of_pid(NETLINK_CB(cb->skb).pid);
 	userns = NETLINK_CB(cb->skb).sk->sk_socket->file->f_cred->user_ns;
 
 	BUILD_BUG_ON(sizeof(struct task_diag_cb) > sizeof(cb->args));
@@ -739,7 +743,7 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 
 	memcpy(&iter.req, nla_data(na), sizeof(iter.req));
 
-	iter.ns     = ns;
+	iter.ns     = pidns;;
 	iter.cb     = diag_cb;
 	iter.parent = NULL;
 	iter.pos    = 0;
@@ -754,7 +758,7 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 			continue;
 		rc = task_diag_fill(task, skb, &iter.req,
 				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq,
-				diag_cb, userns);
+				diag_cb, pidns, userns);
 		if (rc < 0) {
 			if (rc != -EMSGSIZE) {
 				iter_stop(&iter);
@@ -772,11 +776,15 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 {
 	struct nlattr *nla = info->attrs[TASK_DIAG_CMD_ATTR_GET];
 	struct user_namespace *userns;
+	struct pid_namespace *pidns;
 	struct task_struct *tsk = NULL;
 	struct task_diag_pid req;
 	struct sk_buff *msg = NULL;
 	size_t size;
 	int rc;
+
+	if (NETLINK_CB(skb).pid == NULL)
+		return -EINVAL;
 
 	if (!nla_data(nla))
 		return -EINVAL;
@@ -804,6 +812,7 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 		return -EPERM;
 	}
 
+	pidns  = ns_of_pid(NETLINK_CB(skb).pid);
 	userns = NETLINK_CB(skb).sk->sk_socket->file->f_cred->user_ns;
 
 	size = taskdiag_packet_size(req.show_flags, task_vma_num(tsk->mm));
@@ -817,7 +826,7 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
 
 		rc = task_diag_fill(tsk, msg, &req,
 					info->snd_portid, info->snd_seq, NULL,
-					userns);
+					pidns, userns);
 		if (rc != -EMSGSIZE)
 			break;
 
