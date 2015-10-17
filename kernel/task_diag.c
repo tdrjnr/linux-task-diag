@@ -702,7 +702,6 @@ static struct nlattr *task_diag_fill_attr(struct sk_buff *skb,
 	struct nlattr *attr;
 	void *reply;
 
-	printk("%s:%d\n", __func__, __LINE__);
 	reply = genlmsg_put(skb, 0, 0, &taskstats_family, 0, TASK_DIAG_CMD_GET);
 	if (reply == NULL)
 		return NULL;
@@ -723,7 +722,7 @@ SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
 	struct task_struct *task;
 	struct task_iter iter;
 	struct sk_buff *skb;
-	struct task_diag_cb prev_args, diag_args;
+	struct task_diag_cb prev_args = {}, diag_args;
 	size_t off = 0;
 	int size = req_size;
 	int rc = -ESRCH;
@@ -824,112 +823,4 @@ out:
 err:
 	nlmsg_free(skb);
 	return rc;
-}
-
-int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
-{
-	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb->args;
-	struct task_iter iter;
-	struct nlattr *na;
-	struct task_struct *task;
-	int rc;
-
-	BUILD_BUG_ON(sizeof(struct task_diag_cb) > sizeof(cb->args));
-
-	if (nlmsg_len(cb->nlh) < GENL_HDRLEN + sizeof(iter.req))
-		return -EINVAL;
-
-	na = nlmsg_data(cb->nlh) + GENL_HDRLEN;
-	if (na->nla_type < 0)
-		return -EINVAL;
-
-	memcpy(&iter.req, nla_data(na), sizeof(iter.req));
-
-	iter.cb     = diag_cb;
-	iter.parent = NULL;
-	iter.pos    = 0;
-	iter.task   = NULL;
-
-	task = iter_start(&iter);
-	if (IS_ERR(task))
-		return PTR_ERR(task);
-
-	for (; task; task = iter_next(&iter)) {
-		if (!ptrace_may_access(task, PTRACE_MODE_READ))
-			continue;
-		rc = task_diag_fill(task, skb, &iter.req,
-				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq, diag_cb);
-		if (rc < 0) {
-			if (rc != -EMSGSIZE) {
-				iter_stop(&iter);
-				return rc;
-			}
-			break;
-		}
-	}
-	iter_stop(&iter);
-
-	return skb->len;
-}
-
-int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
-{
-	struct nlattr *nla = info->attrs[TASK_DIAG_CMD_ATTR_GET];
-	struct task_struct *tsk = NULL;
-	struct task_diag_pid req;
-	struct sk_buff *msg = NULL;
-	size_t size;
-	int rc;
-
-	if (!nla_data(nla))
-		return -EINVAL;
-
-	if (nla_len(nla) < sizeof(req))
-		return -EINVAL;
-
-	/*
-	 * use a req variable to deal with alignment issues. task_diag_pid
-	 * contains u64 elements which means extended load operations can be
-	 * used and those can require 8-byte alignment (e.g., sparc)
-	 */
-	memcpy(&req, nla_data(nla), sizeof(req));
-
-	rcu_read_lock();
-	tsk = find_task_by_vpid(req.pid);
-	if (tsk)
-		get_task_struct(tsk);
-	rcu_read_unlock();
-	if (!tsk)
-		return -ESRCH;
-
-	if (!ptrace_may_access(tsk, PTRACE_MODE_READ)) {
-		put_task_struct(tsk);
-		return -EPERM;
-	}
-
-	size = taskdiag_packet_size(req.show_flags, task_vma_num(tsk->mm));
-
-	while (1) {
-		msg = genlmsg_new(size, GFP_KERNEL);
-		if (!msg) {
-			put_task_struct(tsk);
-			return -EMSGSIZE;
-		}
-
-		rc = task_diag_fill(tsk, msg, &req,
-					info->snd_portid, info->snd_seq, NULL);
-		if (rc != -EMSGSIZE)
-			break;
-
-		nlmsg_free(msg);
-		size += 128;
-	}
-
-	put_task_struct(tsk);
-	if (rc < 0) {
-		nlmsg_free(msg);
-		return rc;
-	}
-
-	return genlmsg_reply(msg, info);
 }
