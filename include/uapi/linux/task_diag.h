@@ -161,8 +161,6 @@ struct task_diag_pid {
 	__u64	dump_strategy;
 
 	__u32	pid;
-
-	long args[6];
 };
 
 enum {
