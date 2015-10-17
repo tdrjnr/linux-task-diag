@@ -10,15 +10,16 @@
 #include <linux/syscalls.h>
 
 struct task_diag_cb {
-	struct pid_namespace	*ns;
 	pid_t			pid;
 	int			pos;
 	int			attr;
+	int			pad1;
 
 	union { /* per-attribute */
 		struct {
 			unsigned long mark;
 		} vma;
+		long pad[4];
 	};
 };
 
@@ -468,12 +469,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	int flags = 0;
 	u32 pid, tgid;
 
-	if (cb) {
-		n = cb->attr;
-		flags |= NLM_F_MULTI;
-		ns = cb->ns;
-	} else
-		ns = task_active_pid_ns(current);
+	ns = task_active_pid_ns(current);
 
 	reply = genlmsg_put(skb, portid, seq, &taskstats_family,
 					flags, TASK_DIAG_CMD_GET);
@@ -582,7 +578,7 @@ static void iter_stop(struct task_iter *iter)
 
 static struct task_struct *iter_start(struct task_iter *iter)
 {
-	struct pid_namespace *ns = iter->cb->ns;
+	struct pid_namespace *ns = task_active_pid_ns(current);
 
 	if (iter->req.pid > 0) {
 		rcu_read_lock();
@@ -650,7 +646,7 @@ static struct task_struct *iter_start(struct task_iter *iter)
 
 static struct task_struct *iter_next(struct task_iter *iter)
 {
-	struct pid_namespace *ns = iter->cb->ns;
+	struct pid_namespace *ns = task_active_pid_ns(current);
 
 	switch (iter->req.dump_strategy) {
 	case TASK_DIAG_DUMP_ONE:
@@ -700,17 +696,8 @@ static struct task_struct *iter_next(struct task_iter *iter)
 	return NULL;
 }
 
-int taskdiag_done(struct netlink_callback *cb)
-{
-	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb->args;
-
-	put_pid_ns(diag_cb->ns);
-
-	return 0;
-}
-
 static struct nlattr *task_diag_fill_attr(struct sk_buff *skb,
-				struct netlink_callback *cb)
+				struct task_diag_cb *args)
 {
 	struct nlattr *attr;
 	void *reply;
@@ -720,8 +707,8 @@ static struct nlattr *task_diag_fill_attr(struct sk_buff *skb,
 	if (reply == NULL)
 		return NULL;
 
-	attr = nla_reserve(skb, TASK_DIAG_ARGS, sizeof(cb->args));
-	
+	attr = nla_reserve(skb, TASK_DIAG_ARGS, sizeof(*args));
+
 	genlmsg_end(skb, reply);
 
 	return attr;
@@ -736,48 +723,38 @@ SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
 	struct task_struct *task;
 	struct task_iter iter;
 	struct sk_buff *skb;
-	struct netlink_callback cb = {}, cb_prev;
-	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb.args;
+	struct task_diag_cb prev_args, diag_args;
 	size_t off = 0;
 	int size = req_size;
 	int rc = -ESRCH;
 
-	printk("%s:%d\n", __func__, __LINE__);
 	if (req_size < nla_total_size(sizeof(struct task_diag_pid))
 			+ nla_total_size(sizeof(long[6])))
 		return -EINVAL;
-	if (req_size > PAGE_SIZE)
+	if (req_size > sizeof(buf))
 		return -EMSGSIZE;
 	if (copy_from_user(&buf, ureq, req_size))
 		return -EFAULT;
 
-	printk("%s:%d\n", __func__, __LINE__);
 	attr = (void *) buf;
 	if (nla_type(attr) != TASK_DIAG_CMD_GET)
 		return -EINVAL;
-	printk("%s:%d\n", __func__, __LINE__);
 	if (nla_len(attr) != sizeof(iter.req))
 		return -EINVAL;
-	printk("%s:%d\n", __func__, __LINE__);
 	memcpy(&iter.req, nla_data(attr), nla_len(attr));
 
 	attr = nla_next(attr, &size);
 //	if (nla_type(attr) != TASK_DIAG_CMD_CURSOR)
 //		return -EINVAL;
-	printk("%s:%d\n", __func__, __LINE__);
-	if (nla_len(attr) != sizeof(cb.args))
+	if (nla_len(attr) != sizeof(diag_args))
 		return -EINVAL;
-	printk("%s:%d\n", __func__, __LINE__);
-	memcpy(cb.args, nla_data(attr), nla_len(attr));
-	printk("start %lx %lx %lx %lx %lx %lx\n", cb.args[0], cb.args[1], cb.args[2], cb.args[3], cb.args[4], cb.args[5]);
+	memcpy(&diag_args, nla_data(attr), nla_len(attr));
 
 	skb = alloc_skb(resp_size, GFP_KERNEL);
 	if (!skb)
 		return -EMSGSIZE;
 
-	iter.cb  = diag_cb;
-	if (diag_cb->ns == NULL)
-		diag_cb->ns = task_active_pid_ns(current);
+	iter.cb  = &diag_args;
 
 	task = iter_start(&iter);
 	if (IS_ERR(task))
@@ -789,14 +766,15 @@ SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
 			continue;
 
 		rc = task_diag_fill(task, skb, &iter.req,
-				0, 0, diag_cb);
+				0, 0, &diag_args);
 		if (rc < 0) {
 			put_task_struct(task);
 			if (rc != -EMSGSIZE)
 				goto err;
+			goto out;
 		}
 
-		if (off + skb->len > resp_size - 50) //cb
+		if (off + skb->len > resp_size - nla_total_size(sizeof(diag_args)))
 			goto out;
 
 		if (copy_to_user(uresp + off, skb->data, skb->len)) {
@@ -805,7 +783,7 @@ SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
 		}
 		off += skb->len;
 		skb_trim(skb, 0);
-		memcpy(cb_prev.args, cb.args, sizeof(cb.args));
+		memcpy(&prev_args, &diag_args, sizeof(prev_args));
 
 		if (rc < 0)
 			goto out;
@@ -830,13 +808,12 @@ SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
 	goto err;
 out:
 	skb_trim(skb, 0);
-	attr = task_diag_fill_attr(skb, &cb);
+	attr = task_diag_fill_attr(skb, &diag_args);
 	if (attr == NULL) {
 		rc = -EMSGSIZE;
 		goto err;
 	}
-	memcpy(cb.args, cb_prev.args, sizeof(cb.args));
-	memcpy(nla_data(attr), cb_prev.args, sizeof(cb.args));
+	memcpy(nla_data(attr), &prev_args, sizeof(prev_args));
 	if (copy_to_user(uresp + off, skb->data, skb->len)) {
 		rc = -EFAULT;
 		goto err;
@@ -865,9 +842,6 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 	na = nlmsg_data(cb->nlh) + GENL_HDRLEN;
 	if (na->nla_type < 0)
 		return -EINVAL;
-
-	if (diag_cb->ns == NULL)
-		diag_cb->ns = get_pid_ns(task_active_pid_ns(current));
 
 	memcpy(&iter.req, nla_data(na), sizeof(iter.req));
 
