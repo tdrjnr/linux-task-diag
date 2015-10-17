@@ -752,7 +752,6 @@ SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
 		return -EMSGSIZE;
 
 	memcpy(cb.args, req.args, sizeof(cb.args));
-        printk("start %lx %lx %lx %lx %lx %lx\n", cb.args[0], cb.args[1], cb.args[2], cb.args[3], cb.args[4], cb.args[5]);
 
 	memcpy(&iter.req, &req, sizeof(iter.req));
 	iter.cb  = diag_cb;
@@ -784,7 +783,6 @@ SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
 			goto err;
 		}
 		off += skb->len;
-		printk("%s:%d: %d\n", __func__, __LINE__, skb->len);
 		skb_trim(skb, 0);
 		memcpy(cb_prev.args, cb.args, sizeof(cb.args));
 
@@ -811,21 +809,18 @@ SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
 	goto err;
 out:
 	skb_trim(skb, 0);
-	printk("%s:%d: %d\n", __func__, __LINE__, skb->len);
 	attr = task_diag_fill_attr(skb, &cb);
 	if (attr == NULL) {
 		rc = -EMSGSIZE;
 		goto err;
 	}
 	memcpy(cb.args, cb_prev.args, sizeof(cb.args));
-        printk("end %lx %lx %lx %lx %lx %lx\n", cb.args[0], cb.args[1], cb.args[2], cb.args[3], cb.args[4], cb.args[5]);
 	memcpy(nla_data(attr), cb_prev.args, sizeof(cb.args));
 	if (copy_to_user(uresp + off, skb->data, skb->len)) {
 		rc = -EFAULT;
 		goto err;
 	}
 	off += skb->len;
-	printk("%s:%d: %d\n", __func__, __LINE__, skb->len);
 
 	rc = off;
 err:
