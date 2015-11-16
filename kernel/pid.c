@@ -611,7 +611,6 @@ task_next_child(struct task_struct *parent, struct task_struct *prev, unsigned i
 {
 	struct task_struct *task;
 
-	read_lock(&tasklist_lock);
 	/*
 	 * Lets try to continue searching first, this gives
 	 * us significant speedup on children-rich processes.
@@ -651,11 +650,6 @@ task_next_child(struct task_struct *parent, struct task_struct *prev, unsigned i
 	}
 	task = NULL;
 out:
-	if (prev)
-		put_task_struct(prev);
-	if (task)
-		get_task_struct(task);
-	read_unlock(&tasklist_lock);
 	return task;
 }
 
