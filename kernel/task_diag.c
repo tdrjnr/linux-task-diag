@@ -217,6 +217,22 @@ static void iter_stop(struct task_iter *iter)
 		put_task_struct(task);
 }
 
+static struct task_struct *
+task_diag_next_child(struct task_struct *parent, struct task_struct *prev, unsigned int pos)
+{
+	struct task_struct *task;
+
+	read_lock(&tasklist_lock);
+	task = task_next_child(parent, prev, pos);
+	if (prev)
+		put_task_struct(prev);
+	if (task)
+		get_task_struct(task);
+	read_unlock(&tasklist_lock);
+
+	return task;
+}
+
 static struct task_struct *iter_start(struct task_iter *iter)
 {
 	if (iter->req.pid > 0) {
@@ -234,7 +250,7 @@ static struct task_struct *iter_start(struct task_iter *iter)
 			return ERR_PTR(-ESRCH);
 
 		iter->pos = iter->cb->args[0];
-		iter->task = task_next_child(iter->parent, NULL, iter->pos);
+		iter->task = task_diag_next_child(iter->parent, NULL, iter->pos);
 		return iter->task;
 
 	case TASK_DIAG_DUMP_ALL:
@@ -252,7 +268,7 @@ static struct task_struct *iter_next(struct task_iter *iter)
 	switch (iter->req.dump_strategy) {
 	case TASK_DIAG_DUMP_CHILDREN:
 		iter->pos++;
-		iter->task = task_next_child(iter->parent, iter->task, iter->pos);
+		iter->task = task_diag_next_child(iter->parent, iter->task, iter->pos);
 		iter->cb->args[0] = iter->pos;
 		return iter->task;
 
