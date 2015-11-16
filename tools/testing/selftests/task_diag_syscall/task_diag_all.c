@@ -71,7 +71,7 @@ int main(int argc, char *argv[])
 	int nl_sd = -1;
 	struct task_diag_pid *req;
 	long *cb_args;
-	char buf[40960];
+	char buf[409600];
 	char nl_req[4096];
 	struct nlattr *nla = (void *)nl_req;
 	int size = 0;
@@ -89,8 +89,8 @@ int main(int argc, char *argv[])
 	size += nla_total_size(sizeof(long[6]));
 	cb_args = nla_data(nla);
 
-//	pid_req.req.show_flags = TASK_DIAG_SHOW_VMA | TASK_DIAG_SHOW_MSG | TASK_DIAG_SHOW_CRED;
-	req->show_flags = TASK_DIAG_SHOW_BASE;
+	req->show_flags = TASK_DIAG_SHOW_VMA | TASK_DIAG_SHOW_CRED | TASK_DIAG_SHOW_BASE;
+//	req->show_flags = TASK_DIAG_SHOW_BASE;
 	req->dump_strategy = TASK_DIAG_DUMP_ALL;
 	req->pid = 1;
 
@@ -111,7 +111,7 @@ int main(int argc, char *argv[])
 	while (1) {
 		int err;
 
-		rep_len = syscall(__NR_taskdiag, &nl_req, size, buf, 256);
+		rep_len = syscall(__NR_taskdiag, &nl_req, size, buf, sizeof(buf));
 //		rep_len = recv(nl_sd, buf, sizeof(buf), 0);
 		pr_info("received %d bytes\n", rep_len);
 

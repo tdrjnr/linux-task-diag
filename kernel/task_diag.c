@@ -23,39 +23,6 @@ struct task_diag_cb {
 	};
 };
 
-static size_t taskdiag_packet_size(u64 show_flags, int n_vma)
-{
-	size_t size;
-
-	size = nla_total_size(sizeof(u32)); /* PID */
-	       + nla_total_size(sizeof(u32)); /* TGID */
-
-	if (show_flags & TASK_DIAG_SHOW_BASE)
-		size += nla_total_size(sizeof(struct task_diag_base));
-
-	if (show_flags & TASK_DIAG_SHOW_CRED)
-		size += nla_total_size(sizeof(struct task_diag_creds));
-
-	if (show_flags & TASK_DIAG_SHOW_STAT)
-		size += nla_total_size(sizeof(struct taskstats));
-
-	if (show_flags & TASK_DIAG_SHOW_VMA && n_vma > 0) {
-		size_t entry_size;
-
-		/*
-		 * 128 is a schwag on average path length for maps; used to
-		 * ballpark initial memory allocation for genl msg
-		 */
-		entry_size = sizeof(struct task_diag_vma) + 128;
-
-		if (show_flags & TASK_DIAG_SHOW_VMA_STAT)
-			entry_size += sizeof(struct task_diag_vma_stat);
-		size += nla_total_size(entry_size * n_vma);
-	}
-
-	return size;
-}
-
 /*
  * The task state array is a strange "bitmap" of
  * reasons to sleep. Thus "running" is zero, and
@@ -230,24 +197,6 @@ static u64 get_vma_flags(struct vm_area_struct *vma)
 	}
 
 	return flags;
-}
-
-static int task_vma_num(struct mm_struct *mm)
-{
-	struct vm_area_struct *vma;
-	int n_vma = 0;
-
-	if (!mm || !atomic_inc_not_zero(&mm->mm_users))
-		return 0;
-
-	down_read(&mm->mmap_sem);
-	for (vma = mm->mmap; vma; vma = vma->vm_next, n_vma++)
-		;
-
-	up_read(&mm->mmap_sem);
-	mmput(mm);
-
-	return n_vma;
 }
 
 /*
@@ -720,9 +669,9 @@ SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
 	struct nlattr *attr;
 	char buf[128];
 	struct task_struct *task;
-	struct task_iter iter;
+	struct task_iter iter = {};
 	struct sk_buff *skb;
-	struct task_diag_cb prev_args = {}, diag_args;
+	struct task_diag_cb prev_args = {}, diag_args = {};
 	size_t off = 0;
 	int size = req_size;
 	int rc = -ESRCH;
@@ -770,7 +719,6 @@ SYSCALL_DEFINE4(taskdiag, const char __user *, ureq,
 			put_task_struct(task);
 			if (rc != -EMSGSIZE)
 				goto err;
-			goto out;
 		}
 
 		if (off + skb->len > resp_size - nla_total_size(sizeof(diag_args)))
