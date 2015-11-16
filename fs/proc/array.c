@@ -593,20 +593,26 @@ int proc_pid_statm(struct seq_file *m, struct pid_namespace *ns,
 }
 
 #ifdef CONFIG_PROC_CHILDREN
-static struct task_struct *
-get_children_pid(struct inode *inode, struct task_struct *prev, loff_t pos)
+static struct pid *
+get_children_pid(struct inode *inode, struct pid *prev_pid, loff_t pos)
 {
-	struct task_struct *start, *task = NULL;
+	struct task_struct *start, *task, *prev;
+	struct pid *pid = NULL;
 
-	start = get_proc_task(inode);
+	read_lock(&tasklist_lock);
+	start = pid_task(proc_pid(inode), PIDTYPE_PID);
 	if (!start)
 		goto out;
 
-	task = task_next_child(start, prev, pos);
+	prev = prev_pid ? pid_task(prev_pid, PIDTYPE_PID) : NULL;
 
-	put_task_struct(start);
+	task = task_next_child(start, prev, pos);
+	if (task)
+		pid = get_pid(task_pid(task));
+
 out:
-	return task;
+	read_unlock(&tasklist_lock);
+	return pid;
 }
 
 static int children_seq_show(struct seq_file *seq, void *v)
@@ -614,7 +620,7 @@ static int children_seq_show(struct seq_file *seq, void *v)
 	struct inode *inode = seq->private;
 	pid_t pid;
 
-	pid = task_pid_nr_ns(v, inode->i_sb->s_fs_info);
+	pid = pid_nr_ns(v, inode->i_sb->s_fs_info);
 	seq_printf(seq, "%d ", pid);
 
 	return 0;
@@ -627,12 +633,13 @@ static void *children_seq_start(struct seq_file *seq, loff_t *pos)
 
 static void *children_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 {
-	struct task_struct *task;
+	struct pid *pid;
 
-	task = get_children_pid(seq->private, v, *pos + 1);
+	pid = get_children_pid(seq->private, v, *pos + 1);
+	put_pid(v);
 
 	++*pos;
-	return task;
+	return pid;
 }
 
 static void children_seq_stop(struct seq_file *seq, void *v)
