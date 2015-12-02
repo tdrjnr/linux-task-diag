@@ -216,9 +216,10 @@ static int ptrace_has_cap(struct user_namespace *ns, unsigned int mode)
 }
 
 /* Returns 0 on success, -errno on denial. */
-static int __ptrace_may_access(struct task_struct *task, unsigned int mode)
+int ptrace_cred_may_access(const struct cred *cred,
+			   struct task_struct *task, unsigned int mode)
 {
-	const struct cred *cred = current_cred(), *tcred;
+	const struct cred *tcred;
 
 	/* May we inspect the given task?
 	 * This check is used both for attaching with ptrace
@@ -229,9 +230,6 @@ static int __ptrace_may_access(struct task_struct *task, unsigned int mode)
 	 * or halting the specified task is impossible.
 	 */
 	int dumpable = 0;
-	/* Don't let security modules deny introspection */
-	if (same_thread_group(task, current))
-		return 0;
 	rcu_read_lock();
 	tcred = __task_cred(task);
 	if (uid_eq(cred->uid, tcred->euid) &&
@@ -259,6 +257,18 @@ ok:
 	rcu_read_unlock();
 
 	return security_ptrace_access_check(task, mode);
+}
+EXPORT_SYMBOL_GPL(ptrace_cred_may_access);
+
+static int __ptrace_may_access(struct task_struct *task, unsigned int mode)
+{
+	const struct cred *cred = current_cred();
+
+	/* Don't let security modules deny introspection */
+	if (same_thread_group(task, current))
+		return 0;
+
+	return ptrace_cred_may_access(cred, task, mode);
 }
 
 bool ptrace_may_access(struct task_struct *task, unsigned int mode)
