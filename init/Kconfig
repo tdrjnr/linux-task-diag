@@ -434,7 +434,7 @@ config TASKSTATS
 
 config TASK_DIAG
 	bool "Export task/process properties through netlink"
-	depends on NET && TASKSTATS
+	depends on NET
 	default n
 	help
 	  Export selected properties for tasks/processes through the

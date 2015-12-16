@@ -8,7 +8,7 @@ nprocesses=`./task_diag_all all --maps | grep 'pid.*tgid.*ppid.*comm fork$' | wc
 nthreads=`./task_diag_all All --smaps --cred | grep 'pid.*tgid.*ppid.*comm fork$' | wc -l`
 nchildren=`./task_diag_all children --pid 1 | grep 'pid.*tgid.*ppid.*comm fork$' | wc -l`
 
-./task_diag_all one --pid 1 --pidns 1 --cred
+./task_diag_all one --pid 1 --cred
 
 ( exec -a fork_thread ./fork 1 1234 )
 pid=`pidof fork_thread`

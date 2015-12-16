@@ -26,12 +26,6 @@ static inline void taskstats_tgid_free(struct signal_struct *sig)
 extern void taskstats_exit(struct task_struct *, int group_dead);
 extern void taskstats_init_early(void);
 
-struct genl_info;
-struct sk_buff;
-int taskdiag_doit(struct sk_buff *skb, struct genl_info *info);
-struct netlink_callback;
-int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb);
-
 extern void taskstats_fill_stats(struct user_namespace *user_ns,
 		       struct pid_namespace *pid_ns,
 		       struct task_struct *tsk, struct taskstats *stats);

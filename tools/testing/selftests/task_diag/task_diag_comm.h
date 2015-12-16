@@ -3,7 +3,6 @@
 
 #include <stdio.h>
 
-#include <linux/genetlink.h>
 #include "task_diag.h"
 
 /*
@@ -13,9 +12,11 @@
  */
 #define GENLMSG_DATA(glh)	((void *)(NLMSG_DATA(glh) + GENL_HDRLEN))
 #define GENLMSG_PAYLOAD(glh)	(NLMSG_PAYLOAD(glh, 0) - GENL_HDRLEN)
+#define NLA_DATA(na)		((void *)((char *)(na) + NLA_HDRLEN))
+#define NLA_PAYLOAD(len)	(len - NLA_HDRLEN)
 
 #define pr_err(fmt, ...)				\
-		fprintf(stderr, fmt"\n", ##__VA_ARGS__)
+		fprintf(stderr, "%s:%d" fmt"\n", __func__, __LINE__, ##__VA_ARGS__)
 
 #define pr_perror(fmt, ...)				\
 		fprintf(stderr, fmt " : %m\n", ##__VA_ARGS__)
@@ -27,7 +28,7 @@ extern int quiet;
 			printf(fmt, ##arg);	\
 	} while (0)				\
 
-struct genl_ops ops;
-int parse_cb(struct nl_msg *msg, void *arg);
+int nlmsg_receive(void *buf, int len, int (*cb)(struct nlmsghdr *, void *), void *args);
+extern int show_task(struct nlmsghdr *hdr, void *arg);
 
 #endif /* __TASK_DIAG_COMM__ */

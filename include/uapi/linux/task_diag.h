@@ -5,6 +5,8 @@
 #include <linux/netlink.h>
 #include <linux/capability.h>
 
+#define TASK_DIAG_CMD_GET 0xd101U
+
 enum {
 	/* optional attributes which can be specified in show_flags */
 	TASK_DIAG_BASE	= 0,

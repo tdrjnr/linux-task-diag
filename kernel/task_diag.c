@@ -1,7 +1,6 @@
 #include <linux/kernel.h>
 #include <linux/taskstats_kern.h>
 #include <linux/task_diag.h>
-#include <net/genetlink.h>
 #include <linux/pid_namespace.h>
 #include <linux/ptrace.h>
 #include <linux/proc_fs.h>
@@ -10,6 +9,9 @@
 #include <net/sock.h>
 
 struct task_diag_cb {
+	struct sk_buff		*req;
+	struct sk_buff		*resp;
+	const struct nlmsghdr	*nlh;
 	pid_t	pid;
 	int	pos;
 	int	attr;
@@ -19,39 +21,6 @@ struct task_diag_cb {
 		} vma;
 	};
 };
-
-static size_t taskdiag_packet_size(u64 show_flags, int n_vma)
-{
-	size_t size;
-
-	size = nla_total_size(sizeof(u32)); /* PID */
-	       + nla_total_size(sizeof(u32)); /* TGID */
-
-	if (show_flags & TASK_DIAG_SHOW_BASE)
-		size += nla_total_size(sizeof(struct task_diag_base));
-
-	if (show_flags & TASK_DIAG_SHOW_CRED)
-		size += nla_total_size(sizeof(struct task_diag_creds));
-
-	if (show_flags & TASK_DIAG_SHOW_STAT)
-		size += nla_total_size(sizeof(struct taskstats));
-
-	if (show_flags & TASK_DIAG_SHOW_VMA && n_vma > 0) {
-		size_t entry_size;
-
-		/*
-		 * 128 is a schwag on average path length for maps; used to
-		 * ballpark initial memory allocation for genl msg
-		 */
-		entry_size = sizeof(struct task_diag_vma) + 128;
-
-		if (show_flags & TASK_DIAG_SHOW_VMA_STAT)
-			entry_size += sizeof(struct task_diag_vma_stat);
-		size += nla_total_size(entry_size * n_vma);
-	}
-
-	return size;
-}
 
 /*
  * The task state array is a strange "bitmap" of
@@ -128,6 +97,7 @@ static int fill_stats(struct task_struct *tsk, struct sk_buff *skb,
 			struct user_namespace *userns,
 			struct pid_namespace *pidns)
 {
+#ifdef CONFIG_TASKSTATS
 	struct taskstats *diag_stats;
 	struct nlattr *attr;
 
@@ -138,7 +108,7 @@ static int fill_stats(struct task_struct *tsk, struct sk_buff *skb,
 	diag_stats = nla_data(attr);
 
 	taskstats_fill_stats(userns, pidns, tsk, diag_stats);
-
+#endif
 	return 0;
 }
 
@@ -227,24 +197,6 @@ static u64 get_vma_flags(struct vm_area_struct *vma)
 	}
 
 	return flags;
-}
-
-static int task_vma_num(struct mm_struct *mm)
-{
-	struct vm_area_struct *vma;
-	int n_vma = 0;
-
-	if (!mm || !atomic_inc_not_zero(&mm->mm_users))
-		return 0;
-
-	down_read(&mm->mmap_sem);
-	for (vma = mm->mmap; vma; vma = vma->vm_next, n_vma++)
-		;
-
-	up_read(&mm->mmap_sem);
-	mmput(mm);
-
-	return n_vma;
 }
 
 /*
@@ -455,12 +407,12 @@ err:
 }
 
 static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
-			  struct task_diag_pid *req, u32 portid, u32 seq,
+			  struct task_diag_pid *req,
 			  struct task_diag_cb *cb, struct pid_namespace *pidns,
 			  struct user_namespace *userns)
 {
 	u64 show_flags = req->show_flags;
-	void *reply;
+	struct nlmsghdr *nlh;
 	int err = 0, i = 0, n = 0;
 	bool progress = false;
 	int flags = 0;
@@ -471,9 +423,8 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 		flags |= NLM_F_MULTI;
 	}
 
-	reply = genlmsg_put(skb, portid, seq, &taskstats_family,
-					flags, TASK_DIAG_CMD_GET);
-	if (reply == NULL)
+	nlh = nlmsg_put(skb, 0, cb->nlh->nlmsg_seq, TASK_DIAG_CMD_GET, 0, flags);
+	if (nlh == NULL)
 		return -EMSGSIZE;
 
 	pid = task_pid_nr_ns(tsk, pidns);
@@ -527,7 +478,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	}
 
 done:
-	genlmsg_end(skb, reply);
+	nlmsg_end(skb, nlh);
 	if (cb)
 		cb->attr = 0;
 
@@ -536,9 +487,9 @@ err:
 	if (err == -EMSGSIZE && (i > n || progress)) {
 		if (cb)
 			cb->attr = i;
-		genlmsg_end(skb, reply);
+		nlmsg_end(skb, nlh);
 	} else
-		genlmsg_cancel(skb, reply);
+		nlmsg_cancel(skb, nlh);
 
 	return err;
 }
@@ -714,45 +665,49 @@ static struct task_struct *iter_next(struct task_iter *iter)
 	return NULL;
 }
 
-static bool task_diag_may_access(struct sk_buff *skb, struct task_struct *tsk)
+static int __taskdiag_dumpit(struct task_iter *iter, struct task_diag_cb *cb, struct task_struct **start)
 {
-	const struct cred *cred = NETLINK_CB(skb).sk->sk_socket->file->f_cred;
-
-	return !ptrace_cred_may_access(cred, tsk, PTRACE_MODE_READ);
-}
-
-int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
-{
-	struct task_diag_cb *diag_cb = (struct task_diag_cb *) cb->args;
-	struct user_namespace *userns;
-	struct pid_namespace *pidns;
-	struct task_iter iter;
-	struct nlattr *na;
-	struct task_struct *task;
+	struct user_namespace *userns = current_user_ns();
+	struct task_struct *task = *start;
 	int rc;
 
-	BUILD_BUG_ON(sizeof(struct task_diag_cb) > sizeof(cb->args));
+	for (; task; task = iter_next(iter)) {
+		if (!ptrace_may_access(task, PTRACE_MODE_READ))
+			continue;
+		rc = task_diag_fill(task, cb->resp, &iter->req,
+				cb, iter->ns, userns);
+		if (rc < 0) {
+			if (rc != -EMSGSIZE)
+				return rc;
+			break;
+		}
+	}
+	*start = task;
+        return 0;
+}
 
-	if (NETLINK_CB(cb->skb).pid == NULL)
+static int taskdiag_dumpit(struct task_diag_cb *cb,
+				struct pid_namespace *pidns,
+				struct msghdr *msg, size_t len)
+{
+	struct sk_buff *skb = cb->resp;
+	struct task_struct *task;
+	struct task_iter iter;
+	struct nlattr *na;
+	size_t copied;
+	int err;
+
+	if (nlmsg_len(cb->nlh) < sizeof(iter.req))
 		return -EINVAL;
 
-	if (nlmsg_len(cb->nlh) < GENL_HDRLEN + sizeof(iter.req))
-		return -EINVAL;
-
-	if (NETLINK_CB(cb->skb).pid == NULL)
-		return -EINVAL;
-
-	na = nlmsg_data(cb->nlh) + GENL_HDRLEN;
+	na = nlmsg_data(cb->nlh);
 	if (na->nla_type < 0)
 		return -EINVAL;
-
-	pidns  = ns_of_pid(NETLINK_CB(cb->skb).pid);
-	userns = NETLINK_CB(cb->skb).sk->sk_socket->file->f_cred->user_ns;
 
 	memcpy(&iter.req, nla_data(na), sizeof(iter.req));
 
 	iter.ns     = pidns;
-	iter.cb     = diag_cb;
+	iter.cb     = cb;
 	iter.parent = NULL;
 	iter.pos    = 0;
 	iter.task   = NULL;
@@ -761,92 +716,157 @@ int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 	if (IS_ERR(task))
 		return PTR_ERR(task);
 
-	for (; task; task = iter_next(&iter)) {
-		if (!task_diag_may_access(cb->skb, task))
-			continue;
-		rc = task_diag_fill(task, skb, &iter.req,
-				NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq,
-				diag_cb, pidns, userns);
-		if (rc < 0) {
-			if (rc != -EMSGSIZE) {
-				iter_stop(&iter);
-				return rc;
-			}
-			break;
-		}
-	}
-	iter_stop(&iter);
-
-	return skb->len;
-}
-
-int taskdiag_doit(struct sk_buff *skb, struct genl_info *info)
-{
-	struct nlattr *nla = info->attrs[TASK_DIAG_CMD_ATTR_GET];
-	struct user_namespace *userns;
-	struct pid_namespace *pidns;
-	struct task_struct *tsk = NULL;
-	struct task_diag_pid req;
-	struct sk_buff *msg = NULL;
-	size_t size;
-	int rc;
-
-	if (NETLINK_CB(skb).pid == NULL)
-		return -EINVAL;
-
-	if (!nla_data(nla))
-		return -EINVAL;
-
-	if (nla_len(nla) < sizeof(req))
-		return -EINVAL;
-
-	/*
-	 * use a req variable to deal with alignment issues. task_diag_pid
-	 * contains u64 elements which means extended load operations can be
-	 * used and those can require 8-byte alignment (e.g., sparc)
-	 */
-	memcpy(&req, nla_data(nla), sizeof(req));
-
-	rcu_read_lock();
-	tsk = find_task_by_vpid(req.pid);
-	if (tsk)
-		get_task_struct(tsk);
-	rcu_read_unlock();
-	if (!tsk)
-		return -ESRCH;
-
-	if (!task_diag_may_access(skb, tsk)) {
-		put_task_struct(tsk);
-		return -EPERM;
-	}
-
-	pidns  = ns_of_pid(NETLINK_CB(skb).pid);
-	userns = NETLINK_CB(skb).sk->sk_socket->file->f_cred->user_ns;
-
-	size = taskdiag_packet_size(req.show_flags, task_vma_num(tsk->mm));
-
+	copied = 0;
 	while (1) {
-		msg = genlmsg_new(size, GFP_KERNEL);
-		if (!msg) {
-			put_task_struct(tsk);
-			return -EMSGSIZE;
-		}
-
-		rc = task_diag_fill(tsk, msg, &req,
-					info->snd_portid, info->snd_seq, NULL,
-					pidns, userns);
-		if (rc != -EMSGSIZE)
+		err = __taskdiag_dumpit(&iter, cb, &task);
+		if (err < 0)
+			goto err;
+		if (skb->len == 0)
 			break;
 
-		nlmsg_free(msg);
-		size += 128;
+		err = skb_copy_datagram_msg(skb, 0, msg, skb->len);
+		if (err < 0)
+			goto err;
+
+		copied += skb->len;
+
+		skb_trim(skb, 0);
+		if (skb_tailroom(skb) + copied > len)
+			break;
+
+		if (signal_pending(current))
+			break;
 	}
 
-	put_task_struct(tsk);
-	if (rc < 0) {
-		nlmsg_free(msg);
-		return rc;
-	}
-
-	return genlmsg_reply(msg, info);
+	iter_stop(&iter);
+	return copied;
+err:
+	iter_stop(&iter);
+	return err;
 }
+
+static ssize_t task_diag_write (struct file *f, const char __user *buf, size_t len, loff_t *off)
+{
+	struct task_diag_cb *cb = f->private_data;
+	struct sk_buff *skb;
+	struct msghdr msg;
+	struct iovec iov;
+	int err;
+
+	if (cb->req)
+		return -EBUSY;
+	if (len < nlmsg_total_size(0))
+		return -EINVAL;
+
+	err = import_single_range(WRITE, (void __user *) buf, len, &iov, &msg.msg_iter);
+	if (unlikely(err))
+		return err;
+
+	msg.msg_name = NULL;
+	msg.msg_control = NULL;
+	msg.msg_controllen = 0;
+	msg.msg_namelen = 0;
+	msg.msg_flags = 0;
+
+	skb = nlmsg_new(len, GFP_KERNEL);
+	if (skb == NULL)
+		return -ENOMEM;
+
+	if (memcpy_from_msg(skb_put(skb, len), &msg, len)) {
+		kfree_skb(skb);
+		return -EFAULT;
+	}
+
+	memset(cb, 0, sizeof(*cb));
+	cb->req = skb;
+	cb->nlh = nlmsg_hdr(skb);
+
+	return len;
+}
+
+static ssize_t task_diag_read(struct file *file, char __user *ubuf, size_t len, loff_t *off)
+{
+	struct pid_namespace *ns = file_inode(file)->i_sb->s_fs_info;
+	struct task_diag_cb *cb = file->private_data;
+	struct iovec iov;
+	struct msghdr msg;
+	int size, err;
+
+	if (cb->req == NULL)
+		return 0;
+
+	err = import_single_range(READ, ubuf, len, &iov, &msg.msg_iter);
+	if (unlikely(err))
+		goto err;
+	msg.msg_control = NULL;
+	msg.msg_controllen = 0;
+	msg.msg_name = NULL;
+	msg.msg_namelen = 0;
+
+	if (!cb->resp) {
+		size = min_t(size_t, len, 16384);
+		cb->resp = alloc_skb(size, GFP_KERNEL);
+		if (cb->resp == NULL) {
+			err = -ENOMEM;
+			goto err;
+		}
+		/* Trim skb to allocated size. */
+		skb_reserve(cb->resp, skb_tailroom(cb->resp) - size);
+	}
+
+	err = taskdiag_dumpit(cb, ns, &msg, len);
+	if (err < 0)
+		goto err;
+
+	skb_trim(cb->resp, 0);
+
+	return err;
+err:
+	skb_trim(cb->resp, 0);
+	kfree_skb(cb->req);
+	cb->req = 0;
+	return err;
+}
+
+static int task_diag_open (struct inode *inode, struct file *f)
+{
+	f->private_data = kzalloc(sizeof(struct task_diag_cb), GFP_KERNEL);
+	if (f->private_data == NULL)
+		return -ENOMEM;
+
+	return 0;
+}
+
+static int task_diag_release(struct inode *inode, struct file *f)
+{
+	struct task_diag_cb *cb = f->private_data;
+
+	kfree_skb(cb->req);
+	kfree_skb(cb->resp);
+
+	kfree(f->private_data);
+	return 0;
+}
+
+static const struct file_operations task_diag_fops = {
+	.owner		= THIS_MODULE,
+	.open		= task_diag_open,
+	.release	= task_diag_release,
+	.write		= task_diag_write,
+	.read		= task_diag_read,
+};
+
+static __init int task_diag_init(void)
+{
+	if (!proc_create("task-diag", S_IRUGO | S_IWUGO, NULL, &task_diag_fops))
+		return -ENOMEM;
+	return 0;
+}
+
+static __exit void task_diag_exit(void)
+{
+	remove_proc_entry("task-diag", NULL);
+}
+
+module_init(task_diag_init);
+module_exit(task_diag_exit);
