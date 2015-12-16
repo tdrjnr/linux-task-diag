@@ -2,7 +2,7 @@ From 29e6df3db77234a44a680344a61eb5bd735f6d8e Mon Sep 17 00:00:00 2001
 From: Andrey Vagin <avagin@openvz.org>
 Date: Mon, 16 Feb 2015 19:20:52 +0300
 Subject: [PATCH 0/24] kernel: add a netlink interface to get information
- about processes (v2)
+ about processes (v3)
 
 Currently we use the proc file system, where all information are
 presented in text files, what is convenient for humans.  But if we need

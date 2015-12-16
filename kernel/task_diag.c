@@ -514,7 +514,8 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 		/* if the request is to dump all threads of all processes
 		 * only show VMAs for group leader.
 		 */
-		if (req->dump_strategy == TASK_DIAG_DUMP_ALL_THREAD &&
+		if ((req->dump_strategy == TASK_DIAG_DUMP_ALL_THREAD ||
+		     req->dump_strategy == TASK_DIAG_DUMP_THREAD) &&
 		    !thread_group_leader(tsk))
 			goto done;
 
