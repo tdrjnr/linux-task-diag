@@ -32,8 +32,9 @@ int taskdiag_doit(struct sk_buff *skb, struct genl_info *info);
 struct netlink_callback;
 int taskdiag_dumpit(struct sk_buff *skb, struct netlink_callback *cb);
 
-extern int fill_stats_for_pid(pid_t pid, struct taskstats *stats);
-
+extern void taskstats_fill_stats(struct user_namespace *user_ns,
+		       struct pid_namespace *pid_ns,
+		       struct task_struct *tsk, struct taskstats *stats);
 #else
 static inline void taskstats_exit(struct task_struct *tsk, int group_dead)
 {}

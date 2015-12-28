@@ -168,7 +168,7 @@ static void send_cpu_listeners(struct sk_buff *skb,
 	up_write(&listeners->sem);
 }
 
-static void fill_stats(struct user_namespace *user_ns,
+void taskstats_fill_stats(struct user_namespace *user_ns,
 		       struct pid_namespace *pid_ns,
 		       struct task_struct *tsk, struct taskstats *stats)
 {
@@ -192,7 +192,7 @@ static void fill_stats(struct user_namespace *user_ns,
 	xacct_add_tsk(stats, tsk);
 }
 
-int fill_stats_for_pid(pid_t pid, struct taskstats *stats)
+static int fill_stats_for_pid(pid_t pid, struct taskstats *stats)
 {
 	struct task_struct *tsk;
 
@@ -203,7 +203,7 @@ int fill_stats_for_pid(pid_t pid, struct taskstats *stats)
 	rcu_read_unlock();
 	if (!tsk)
 		return -ESRCH;
-	fill_stats(current_user_ns(), task_active_pid_ns(current), tsk, stats);
+	taskstats_fill_stats(current_user_ns(), task_active_pid_ns(current), tsk, stats);
 	put_task_struct(tsk);
 	return 0;
 }
@@ -644,7 +644,7 @@ void taskstats_exit(struct task_struct *tsk, int group_dead)
 	if (!stats)
 		goto err;
 
-	fill_stats(&init_user_ns, &init_pid_ns, tsk, stats);
+	taskstats_fill_stats(&init_user_ns, &init_pid_ns, tsk, stats);
 
 	/*
 	 * Doesn't matter if tsk is the leader or the last group member leaving

@@ -104,11 +104,12 @@ static inline void caps2diag(struct task_diag_caps *diag, const kernel_cap_t *ca
 		diag->cap[i] = cap->cap[i];
 }
 
-static int fill_stats(struct task_struct *tsk, struct sk_buff *skb)
+static int fill_stats(struct task_struct *tsk, struct sk_buff *skb,
+			struct user_namespace *userns,
+			struct pid_namespace *pidns)
 {
 	struct taskstats *diag_stats;
 	struct nlattr *attr;
-	int ret;
 
 	attr = nla_reserve(skb, TASK_DIAG_STAT, sizeof(struct taskstats));
 	if (!attr)
@@ -116,9 +117,8 @@ static int fill_stats(struct task_struct *tsk, struct sk_buff *skb)
 
 	diag_stats = nla_data(attr);
 
-	ret = fill_stats_for_pid(task_pid_vnr(tsk), diag_stats);
-	if (ret)
-		return ret;
+	taskstats_fill_stats(userns, pidns, tsk, diag_stats);
+
 	return 0;
 }
 
@@ -199,7 +199,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 
 	if (show_flags & TASK_DIAG_SHOW_STAT) {
 		if (i >= n)
-			err = fill_stats(tsk, skb);
+			err = fill_stats(tsk, skb, userns, pidns);
 		if (err)
 			goto err;
 		i++;
