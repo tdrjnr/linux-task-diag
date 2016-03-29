@@ -396,7 +396,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	int err = 0, i = 0, n = 0;
 	bool progress = false;
 	int flags = 0;
-	u32 pid;
+	u32 pid, tgid;
 
 	if (cb) {
 		n = cb->attr;
@@ -409,6 +409,11 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 
 	pid = task_pid_nr_ns(tsk, pidns);
 	err = nla_put_u32(skb, TASK_DIAG_PID, pid);
+	if (err)
+		goto err;
+
+	tgid = task_tgid_vnr(tsk);
+	err = nla_put_u32(skb, TASK_DIAG_TGID, tgid);
 	if (err)
 		goto err;
 
