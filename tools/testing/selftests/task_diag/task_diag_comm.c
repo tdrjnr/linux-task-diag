@@ -56,6 +56,7 @@ int show_task(struct nlmsghdr *hdr, void *arg)
 {
 	int msg_len;
 	struct msgtemplate *msg;
+	struct task_diag_msg *diag_msg;
 	struct nlattr *na;
 	int *last_pid = arg;
 	int len;
@@ -63,25 +64,21 @@ int show_task(struct nlmsghdr *hdr, void *arg)
 	msg_len = NLMSG_PAYLOAD(hdr, 0);
 
 	msg = (struct msgtemplate *)hdr;
-	na = (struct nlattr *) NLMSG_DATA(msg);
-	len = 0;
+	diag_msg = NLMSG_DATA(msg);
+
+#if 1
+	if (diag_msg->pid != *last_pid)
+		pr_info("Start getting information about %d\n", diag_msg->pid);
+	else
+		pr_info("Continue getting information about %d\n", diag_msg->pid);
+#endif
+	*last_pid = diag_msg->pid;
+
+	na = ((void *) diag_msg) + NLMSG_ALIGN(sizeof(*diag_msg));
+	len = NLMSG_ALIGN(sizeof(*diag_msg));
 	while (len < msg_len) {
 		len += NLA_ALIGN(na->nla_len);
 		switch (na->nla_type) {
-		case TASK_DIAG_PID:
-		{
-			int pid;
-
-			pid = *((__u32 *)NLA_DATA(na));
-#if 1
-			if (pid != *last_pid)
-				pr_info("Start getting information about %d\n", pid);
-			else
-				pr_info("Continue getting information about %d\n", pid);
-#endif
-			*last_pid = pid;
-		}
-		break;
 		case TASK_DIAG_BASE:
 		{
 			struct task_diag_base *msg;
@@ -168,7 +165,7 @@ int show_task(struct nlmsghdr *hdr, void *arg)
 			pr_info("Unknown nla_type %d\n",
 				na->nla_type);
 		}
-		na = (struct nlattr *) (NLMSG_DATA(msg) + len);
+		na = ((void *) diag_msg) + len;
 	}
 
 	return 0;

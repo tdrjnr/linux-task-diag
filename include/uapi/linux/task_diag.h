@@ -7,16 +7,17 @@
 
 #define TASK_DIAG_CMD_GET 0xd101U
 
+struct task_diag_msg {
+	__u32 pid;
+	__u32 tgid;
+};
+
 enum {
 	/* optional attributes which can be specified in show_flags */
 	TASK_DIAG_BASE	= 0,
 	TASK_DIAG_CRED,
 	TASK_DIAG_VMA,
 	TASK_DIAG_VMA_STAT,
-
-	/* other attributes */
-	TASK_DIAG_PID	= 64,	/* u32 */
-	TASK_DIAG_TGID,		/* u32 */
 
 	__TASK_DIAG_ATTR_MAX
 #define TASK_DIAG_ATTR_MAX (__TASK_DIAG_ATTR_MAX - 1)
