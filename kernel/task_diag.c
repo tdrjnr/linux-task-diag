@@ -393,6 +393,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 {
 	u64 show_flags = req->show_flags;
 	struct nlmsghdr *nlh;
+	struct task_diag_msg *msg;
 	int err = 0, i = 0, n = 0;
 	bool progress = false;
 	int flags = 0;
@@ -403,19 +404,13 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 		flags |= NLM_F_MULTI;
 	}
 
-	nlh = nlmsg_put(skb, 0, cb->nlh->nlmsg_seq, TASK_DIAG_CMD_GET, 0, flags);
+	nlh = nlmsg_put(skb, 0, cb->nlh->nlmsg_seq, TASK_DIAG_CMD_GET, sizeof(*msg), flags);
 	if (nlh == NULL)
 		return -EMSGSIZE;
 
-	pid = task_pid_nr_ns(tsk, pidns);
-	err = nla_put_u32(skb, TASK_DIAG_PID, pid);
-	if (err)
-		goto err;
-
-	tgid = task_tgid_vnr(tsk);
-	err = nla_put_u32(skb, TASK_DIAG_TGID, tgid);
-	if (err)
-		goto err;
+	msg = nlmsg_data(nlh);
+	msg->pid = task_pid_nr_ns(tsk, pidns);
+	msg->tgid = task_tgid_vnr(tsk);
 
 	if (show_flags & TASK_DIAG_SHOW_BASE) {
 		if (i >= n)
