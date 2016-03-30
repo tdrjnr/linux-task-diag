@@ -397,7 +397,6 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	int err = 0, i = 0, n = 0;
 	bool progress = false;
 	int flags = 0;
-	u32 pid, tgid;
 
 	if (cb) {
 		n = cb->attr;
@@ -671,7 +670,7 @@ static int taskdiag_dumpit(struct task_diag_cb *cb,
 	if (na->nla_type < 0)
 		return -EINVAL;
 
-	memcpy(&iter.req, nla_data(na), sizeof(iter.req));
+	memcpy(&iter.req, na, sizeof(iter.req));
 
 	iter.ns     = pidns;
 	iter.cb     = cb;

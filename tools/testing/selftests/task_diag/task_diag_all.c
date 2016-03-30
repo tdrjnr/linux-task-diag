@@ -43,7 +43,6 @@ int main(int argc, char *argv[])
 	struct task_diag_pid *req;
 	char nl_req[4096];
 	struct nlmsghdr *hdr = (void *)nl_req;
-	struct nlattr *nla = nlmsg_data(hdr);
 	int last_pid = 0;
 	int opt, idx;
 	int err, size = 0;
@@ -58,9 +57,7 @@ int main(int argc, char *argv[])
 
 	hdr->nlmsg_len = nlmsg_total_size(0);
 
-	nla->nla_type = TASK_DIAG_CMD_GET;
-	nla->nla_len = nla_attr_size(sizeof(*req));
-	req = nla_data(nla);
+	req = nlmsg_data(hdr);
 	size += nla_total_size(sizeof(*req));
 
 	hdr->nlmsg_len += size;
