@@ -408,8 +408,8 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 		return -EMSGSIZE;
 
 	msg = nlmsg_data(nlh);
-	msg->pid = task_pid_nr_ns(tsk, pidns);
-	msg->tgid = task_tgid_vnr(tsk);
+	msg->pid  = task_pid_nr_ns(tsk, pidns);
+	msg->tgid = task_tgid_nr_ns(tsk, pidns);
 
 	if (show_flags & TASK_DIAG_SHOW_BASE) {
 		if (i >= n)
