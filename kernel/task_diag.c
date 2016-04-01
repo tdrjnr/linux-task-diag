@@ -7,6 +7,8 @@
 #include <linux/taskstats.h>
 #include <net/sock.h>
 
+#include "../fs/proc/internal.h"
+
 struct task_diag_cb {
 	struct sk_buff		*req;
 	struct sk_buff		*resp;
@@ -44,6 +46,154 @@ static inline const __u8 get_task_state(struct task_struct *tsk)
 	BUILD_BUG_ON(1 + ilog2(TASK_REPORT) != ARRAY_SIZE(task_state_array)-1);
 
 	return task_state_array[fls(state)];
+}
+
+static int fill_task_statm(struct task_struct *task, struct sk_buff *skb, int whole)
+{
+	struct task_diag_statm *st;
+	struct nlattr *attr;
+
+	unsigned long text, lib, swap, ptes, pmds, anon, file, shmem;
+	unsigned long hiwater_vm, total_vm, hiwater_rss, total_rss;
+	unsigned long stack_vm, data_vm, locked_vm, pinned_vm;
+	struct mm_struct *mm;
+
+	mm = get_task_mm(task);
+	if (!mm)
+		return 0;
+
+	anon = get_mm_counter(mm, MM_ANONPAGES);
+	file = get_mm_counter(mm, MM_FILEPAGES);
+	shmem = get_mm_counter(mm, MM_SHMEMPAGES);
+
+	/*
+	 * Note: to minimize their overhead, mm maintains hiwater_vm and
+	 * hiwater_rss only when about to *lower* total_vm or rss.  Any
+	 * collector of these hiwater stats must therefore get total_vm
+	 * and rss too, which will usually be the higher.  Barriers? not
+	 * worth the effort, such snapshots can always be inconsistent.
+	 */
+	hiwater_vm = total_vm = mm->total_vm;
+	if (hiwater_vm < mm->hiwater_vm)
+		hiwater_vm = mm->hiwater_vm;
+	hiwater_rss = total_rss = anon + file + shmem;
+	if (hiwater_rss < mm->hiwater_rss)
+		hiwater_rss = mm->hiwater_rss;
+
+	text = (PAGE_ALIGN(mm->end_code) - (mm->start_code & PAGE_MASK)) >> PAGE_SHIFT;
+	lib = mm->exec_vm - text;
+	swap = get_mm_counter(mm, MM_SWAPENTS);
+	ptes = PTRS_PER_PTE * sizeof(pte_t) * atomic_long_read(&mm->nr_ptes);
+	pmds = PTRS_PER_PMD * sizeof(pmd_t) * mm_nr_pmds(mm);
+
+	data_vm   = mm->data_vm;
+	stack_vm  = mm->stack_vm;
+	locked_vm = mm->locked_vm;
+	pinned_vm = mm->pinned_vm;
+
+	mmput(mm);
+
+	attr = nla_reserve(skb, TASK_DIAG_STATM, sizeof(struct task_diag_statm));
+	if (!attr)
+		return -EMSGSIZE;
+
+	st = nla_data(attr);
+
+	st->anon	= anon;
+	st->file	= file;
+	st->shmem	= shmem;
+	st->hiwater_vm	= hiwater_vm;
+	st->hiwater_rss	= hiwater_rss;
+	st->text	= text;
+	st->lib		= lib;
+	st->swap	= swap;
+	st->ptes	= ptes;
+	st->pmds	= pmds;
+	st->total_rss	= total_rss;
+	st->total_vm	= total_vm;
+	st->data_vm	= data_vm;
+	st->stack_vm	= stack_vm;
+	st->locked_vm	= locked_vm;
+	st->pinned_vm	= pinned_vm;
+
+	return 0;
+}
+
+static int fill_task_stat(struct task_struct *task, struct sk_buff *skb, int whole)
+{
+	struct task_diag_stat *st;
+	struct nlattr *attr;
+
+	int priority, nice;
+	int num_threads = 0;
+	unsigned long cmin_flt = 0, cmaj_flt = 0;
+	unsigned long  min_flt = 0,  maj_flt = 0;
+	cputime_t cutime, cstime, utime, stime;
+	cputime_t cgtime, gtime;
+	unsigned long flags;
+
+	attr = nla_reserve(skb, TASK_DIAG_STAT, sizeof(struct task_diag_stat));
+	if (!attr)
+		return -EMSGSIZE;
+
+	st = nla_data(attr);
+
+	cutime = cstime = utime = stime = 0;
+	cgtime = gtime = 0;
+	if (lock_task_sighand(task, &flags)) {
+		struct signal_struct *sig = task->signal;
+
+		num_threads = get_nr_threads(task);
+
+		cmin_flt = sig->cmin_flt;
+		cmaj_flt = sig->cmaj_flt;
+		cutime = sig->cutime;
+		cstime = sig->cstime;
+		cgtime = sig->cgtime;
+
+		/* add up live thread stats at the group level */
+		if (whole) {
+			struct task_struct *t = task;
+			do {
+				min_flt += t->min_flt;
+				maj_flt += t->maj_flt;
+				gtime += task_gtime(t);
+			} while_each_thread(task, t);
+
+			min_flt += sig->min_flt;
+			maj_flt += sig->maj_flt;
+			thread_group_cputime_adjusted(task, &utime, &stime);
+			gtime += sig->gtime;
+		}
+
+		unlock_task_sighand(task, &flags);
+	}
+
+	if (!whole) {
+		min_flt = task->min_flt;
+		maj_flt = task->maj_flt;
+		task_cputime_adjusted(task, &utime, &stime);
+		gtime = task_gtime(task);
+	}
+
+	/* scale priority and nice values from timeslices to -20..20 */
+	/* to make it look like a "normal" Unix priority/nice value  */
+	priority = task_prio(task);
+	nice = task_nice(task);
+
+
+	st->minflt	= min_flt;
+	st->cminflt	= cmin_flt;
+	st->majflt	= maj_flt;
+	st->cmajflt	= cmaj_flt;
+	st->utime	= cputime_to_clock_t(utime);
+	st->stime	= cputime_to_clock_t(stime);
+	st->cutime	= cputime_to_clock_t(cutime);
+	st->cstime	= cputime_to_clock_t(cstime);
+
+	st->threads	= num_threads;
+
+	return 0;
 }
 
 static int fill_task_base(struct task_struct *p, struct sk_buff *skb, struct pid_namespace *ns)
@@ -410,6 +560,7 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	msg = nlmsg_data(nlh);
 	msg->pid  = task_pid_nr_ns(tsk, pidns);
 	msg->tgid = task_tgid_nr_ns(tsk, pidns);
+	msg->flags |= TASK_DIAG_FLAG_CONT;
 
 	if (show_flags & TASK_DIAG_SHOW_BASE) {
 		if (i >= n)
@@ -442,6 +593,24 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 			goto err;
 		i++;
 	}
+
+	if (show_flags & TASK_DIAG_SHOW_STAT) {
+		if (i >= n)
+			err = fill_task_stat(tsk, skb, 1);
+		if (err)
+			goto err;
+		i++;
+	}
+
+	if (show_flags & TASK_DIAG_SHOW_STATM) {
+		if (i >= n)
+			err = fill_task_statm(tsk, skb, 1);
+		if (err)
+			goto err;
+		i++;
+	}
+
+	msg->flags &= ~TASK_DIAG_FLAG_CONT;
 
 done:
 	nlmsg_end(skb, nlh);
