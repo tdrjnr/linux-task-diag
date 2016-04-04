@@ -950,16 +950,14 @@ static ssize_t task_diag_read(struct file *file, char __user *ubuf, size_t len, 
 	}
 
 	err = taskdiag_dumpit(cb, ns, &msg, len);
-	if (err < 0)
-		goto err;
 
-	skb_trim(cb->resp, 0);
-
-	return err;
 err:
 	skb_trim(cb->resp, 0);
-	kfree_skb(cb->req);
-	cb->req = 0;
+	if (err <= 0) {
+		kfree_skb(cb->req);
+		cb->req = NULL;
+	}
+
 	return err;
 }
 
