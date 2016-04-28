@@ -77,10 +77,19 @@ out:
 static int ovl_getattr(struct vfsmount *mnt, struct dentry *dentry,
 			 struct kstat *stat)
 {
+	struct inode *inode = d_backing_inode(dentry);
 	struct path realpath;
+	int ret;
 
 	ovl_path_real(dentry, &realpath);
-	return vfs_getattr(&realpath, stat);
+	ret = vfs_getattr(&realpath, stat);
+	if (ret)
+		return ret;
+
+	stat->dev = inode->i_sb->s_dev;
+	stat->ino = inode->i_ino;
+
+	return ret;
 }
 
 int ovl_permission(struct inode *inode, int mask)
