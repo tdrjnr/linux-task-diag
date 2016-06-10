@@ -3284,7 +3284,11 @@ int tcp_connect(struct sock *sk)
 	struct sk_buff *buff;
 	int err;
 
+	if (unlikely(tp->repair))
+		printk("dst = %p\n", __sk_dst_get(sk));
 	tcp_connect_init(sk);
+	if (unlikely(tp->repair))
+		printk("%s:%d: dst = %p\n", __func__, __LINE__, __sk_dst_get(sk));
 
 	if (unlikely(tp->repair)) {
 		tcp_finish_connect(sk, NULL);

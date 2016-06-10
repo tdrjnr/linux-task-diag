@@ -155,6 +155,8 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 	if (usin->sin_family != AF_INET)
 		return -EAFNOSUPPORT;
 
+	if (unlikely(tp->repair))
+		printk("%s:%d: dst = %p\n", __func__, __LINE__, __sk_dst_get(sk));
 	nexthop = daddr = usin->sin_addr.s_addr;
 	inet_opt = rcu_dereference_protected(inet->inet_opt,
 					     lockdep_sock_is_held(sk));
@@ -164,6 +166,8 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 		nexthop = inet_opt->opt.faddr;
 	}
 
+	if (unlikely(tp->repair))
+		printk("%s:%d: dst = %p\n", __func__, __LINE__, __sk_dst_get(sk));
 	orig_sport = inet->inet_sport;
 	orig_dport = usin->sin_port;
 	fl4 = &inet->cork.fl.u.ip4;
@@ -177,6 +181,8 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 			IP_INC_STATS(sock_net(sk), IPSTATS_MIB_OUTNOROUTES);
 		return err;
 	}
+	if (unlikely(tp->repair))
+		printk("%s:%d: dst = %p\n", __func__, __LINE__, __sk_dst_get(sk));
 
 	if (rt->rt_flags & (RTCF_MULTICAST | RTCF_BROADCAST)) {
 		ip_rt_put(rt);
@@ -186,6 +192,8 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 	if (!inet_opt || !inet_opt->opt.srr)
 		daddr = fl4->daddr;
 
+	if (unlikely(tp->repair))
+		printk("%s:%d: dst = %p\n", __func__, __LINE__, __sk_dst_get(sk));
 	if (!inet->inet_saddr)
 		inet->inet_saddr = fl4->saddr;
 	sk_rcv_saddr_set(sk, inet->inet_saddr);
@@ -202,6 +210,8 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 	    !tp->rx_opt.ts_recent_stamp && fl4->daddr == daddr)
 		tcp_fetch_timewait_stamp(sk, &rt->dst);
 
+	if (unlikely(tp->repair))
+		printk("%s:%d: dst = %p\n", __func__, __LINE__, __sk_dst_get(sk));
 	inet->inet_dport = usin->sin_port;
 	sk_daddr_set(sk, daddr);
 
@@ -233,6 +243,8 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 	/* OK, now commit destination to socket.  */
 	sk->sk_gso_type = SKB_GSO_TCPV4;
 	sk_setup_caps(sk, &rt->dst);
+	if (unlikely(tp->repair))
+		printk("%s:%d: dst = %p\n", __func__, __LINE__, __sk_dst_get(sk));
 
 	if (!tp->write_seq && likely(!tp->repair))
 		tp->write_seq = secure_tcp_sequence_number(inet->inet_saddr,
