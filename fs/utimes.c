@@ -129,7 +129,7 @@ long do_utimes(int dfd, const char __user *filename, struct timespec *times,
 		goto out;
 	}
 
-	if (flags & ~AT_SYMLINK_NOFOLLOW)
+	if (flags & ~(AT_SYMLINK_NOFOLLOW | AT_FDROOT))
 		goto out;
 
 	if (filename == NULL && dfd != AT_FDCWD) {
@@ -151,6 +151,8 @@ long do_utimes(int dfd, const char __user *filename, struct timespec *times,
 
 		if (!(flags & AT_SYMLINK_NOFOLLOW))
 			lookup_flags |= LOOKUP_FOLLOW;
+		if (flags & AT_FDROOT)
+			lookup_flags |= LOOKUP_DFD_ROOT;
 retry:
 		error = user_path_at(dfd, filename, lookup_flags, &path);
 		if (error)
