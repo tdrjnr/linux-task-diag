@@ -95,13 +95,15 @@ int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,
 	unsigned int lookup_flags = 0;
 
 	if ((flag & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
-		      AT_EMPTY_PATH)) != 0)
+		      AT_EMPTY_PATH | AT_FDROOT)) != 0)
 		goto out;
 
 	if (!(flag & AT_SYMLINK_NOFOLLOW))
 		lookup_flags |= LOOKUP_FOLLOW;
 	if (flag & AT_EMPTY_PATH)
 		lookup_flags |= LOOKUP_EMPTY;
+	if (flag & AT_FDROOT)
+		lookup_flags |= LOOKUP_DFD_ROOT;
 retry:
 	error = user_path_at(dfd, filename, lookup_flags, &path);
 	if (error)
