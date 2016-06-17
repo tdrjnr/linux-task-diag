@@ -1,0 +1,86 @@
+From 2503103ff75573a975da8660207c8db00d98c1c2 Mon Sep 17 00:00:00 2001
+From: Andrey Vagin <avagin@openvz.org>
+Date: Fri, 17 Jun 2016 10:16:08 -0700
+Subject: [PATCH 0/3 v2] fs: allow to use dirfd as root for openat and other *at syscalls
+
+The problem is that a pathname can contain absolute symlinks and now
+they are resolved relative to the current root.
+
+It may be a problem if you want to open a file in another namespace.
+For example, you open /proc/PID/root for a process from the target
+namespace and then you use openat() to open a file from this namespace.
+
+If a path to the file contains an absolute symlink, you will open a file
+from the current namespace, because a symlink will be resolved relative
+to the current root.
+
+A proposed solution adds a new flag which means that dirfd should be
+set as a root for a current system call (openat(), statat(), etc).
+
+Here are examples how we can open a file in a contex of another process.
+
+How we can do this without these changes:
+
+	old_root = open("/", O_PATH);
+	old_cwd = open(".", O_PATH);
+	chroot("/proc/PID/root");
+
+	fd = open(pathname, O_RDONLY);
+
+	fchdir(old_root); /* emulate fchroot() */
+	chroot(".");
+	fchdir(old_cwd);
+
+	close(old_cwd);
+	close(old_root);
+
+How this code is simplified with new flags:
+	dirfd = open("/proc/PID/root", O_PATH);
+	fd = open(dirfd, pathname, O_RDONLY | O_ATROOT);
+	close(dirfd);
+
+One more thing is that chroot isn't available for unprivileged users.
+
+We met this problem, when we tryed to dump an ubuntu container and
+failed to resolve /proc/PID/root/var/run/mysqld/mysqld.sock, because
+/var/run was a symlink to /run.
+
+Changes since the first version:
+- change a value of O_ATROOT to not intersect with other constants. 
+
+Cc: Alexander Viro <viro@zeniv.linux.org.uk>
+Cc: "Eric W. Biederman" <ebiederm@xmission.com>
+Cc: Arnd Bergmann <arnd@arndb.de>
+Cc: "J. Bruce Fields" <bfields@redhat.com>
+Cc: Miklos Szeredi <mszeredi@redhat.com>
+Cc: NeilBrown <neilb@suse.de>
+Cc: Shuah Khan <shuahkh@osg.samsung.com>
+Signed-off-by: Andrey Vagin <avagin@openvz.org>
+
+Andrey Vagin (3):
+  namei: add LOOKUP_DFD_ROOT to use dfd as root
+  fs: allow to use dirfd as root for openat and other *at syscalls
+  selftests: check O_ATROOT and AT_FDROOT flags
+
+ fs/exec.c                                       |  4 +-
+ fs/namei.c                                      | 22 ++++++--
+ fs/open.c                                       |  6 ++-
+ fs/stat.c                                       |  4 +-
+ fs/utimes.c                                     |  4 +-
+ include/linux/namei.h                           |  2 +
+ include/uapi/asm-generic/fcntl.h                |  4 ++
+ include/uapi/linux/fcntl.h                      |  1 +
+ tools/testing/selftests/Makefile                |  1 +
+ tools/testing/selftests/lookup/.gitignore       |  1 +
+ tools/testing/selftests/lookup/Makefile         |  8 +++
+ tools/testing/selftests/lookup/lookup_at_root.c | 69 +++++++++++++++++++++++++
+ tools/testing/selftests/lookup/run.sh           | 14 +++++
+ 13 files changed, 131 insertions(+), 9 deletions(-)
+ create mode 100644 tools/testing/selftests/lookup/.gitignore
+ create mode 100644 tools/testing/selftests/lookup/Makefile
+ create mode 100644 tools/testing/selftests/lookup/lookup_at_root.c
+ create mode 100755 tools/testing/selftests/lookup/run.sh
+
+-- 
+2.5.5
+
