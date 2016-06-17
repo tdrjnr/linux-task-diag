@@ -62,6 +62,7 @@
 #define AT_SYMLINK_FOLLOW	0x400   /* Follow symbolic links.  */
 #define AT_NO_AUTOMOUNT		0x800	/* Suppress terminal automount traversal */
 #define AT_EMPTY_PATH		0x1000	/* Allow empty relative pathname */
+#define AT_FDROOT		0x2000	/* Resolve a path as if dirfd is root */
 
 
 #endif /* _UAPI_LINUX_FCNTL_H */
