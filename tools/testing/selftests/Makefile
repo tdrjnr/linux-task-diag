@@ -9,6 +9,7 @@ TARGETS += futex
 TARGETS += ipc
 TARGETS += kcmp
 TARGETS += lib
+TARGETS += lookup
 TARGETS += membarrier
 TARGETS += memfd
 TARGETS += memory-hotplug
