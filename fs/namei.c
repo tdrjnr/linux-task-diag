@@ -2172,7 +2172,7 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 	nd->path.dentry = NULL;
 
 	nd->m_seq = read_seqbegin(&mount_lock);
-	if (*s == '/') {
+	if (*s == '/' && !(flags & LOOKUP_DFD_ROOT)) {
 		if (flags & LOOKUP_RCU)
 			rcu_read_lock();
 		set_root(nd);
@@ -2197,6 +2197,13 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 		} else {
 			get_fs_pwd(current->fs, &nd->path);
 			nd->inode = nd->path.dentry->d_inode;
+		}
+		if (flags & LOOKUP_DFD_ROOT) {
+			nd->root = nd->path;
+			if (flags & LOOKUP_RCU)
+				nd->root_seq = nd->seq;
+			else
+				path_get(&nd->root);
 		}
 		return s;
 	} else {
@@ -2226,6 +2233,13 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 			nd->inode = nd->path.dentry->d_inode;
 		}
 		fdput(f);
+		if (flags & LOOKUP_DFD_ROOT) {
+			nd->root = nd->path;
+			if (flags & LOOKUP_RCU)
+				nd->root_seq = nd->seq;
+			else
+				path_get(&nd->root);
+		}
 		return s;
 	}
 }
