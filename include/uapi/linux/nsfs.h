@@ -5,5 +5,6 @@
 
 #define NSIO	0xb7
 #define NS_GET_USERNS	_IO(NSIO, 0x1)
+#define NS_GET_PARENT	_IO(NSIO, 0x2)
 
 #endif /* __LINUX_NSFS_H */
