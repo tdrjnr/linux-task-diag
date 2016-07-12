@@ -405,12 +405,18 @@ static int pidns_install(struct nsproxy *nsproxy, struct ns_common *ns)
 	return 0;
 }
 
+static struct user_namespace *pidns_get_owner(struct ns_common *ns)
+{
+	return to_pid_ns(ns)->user_ns;
+}
+
 const struct proc_ns_operations pidns_operations = {
 	.name		= "pid",
 	.type		= CLONE_NEWPID,
 	.get		= pidns_get,
 	.put		= pidns_put,
 	.install	= pidns_install,
+	.get_owner	= pidns_get_owner,
 };
 
 static __init int pid_namespaces_init(void)

@@ -154,10 +154,16 @@ static int utsns_install(struct nsproxy *nsproxy, struct ns_common *new)
 	return 0;
 }
 
+static struct user_namespace *utsns_get_owner(struct ns_common *ns)
+{
+	return to_uts_ns(ns)->user_ns;
+}
+
 const struct proc_ns_operations utsns_operations = {
 	.name		= "uts",
 	.type		= CLONE_NEWUTS,
 	.get		= utsns_get,
 	.put		= utsns_put,
 	.install	= utsns_install,
+	.get_owner	= utsns_get_owner,
 };
