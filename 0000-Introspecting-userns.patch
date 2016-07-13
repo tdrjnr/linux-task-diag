@@ -1,0 +1,80 @@
+From 00b9969a4e3a8a2bf8a21976a0960bd5535822b3 Mon Sep 17 00:00:00 2001
+From: Andrey Vagin <avagin@openvz.org>
+Date: Wed, 13 Jul 2016 15:26:53 -0700
+Subject: [PATCH 0/5 v2] Add an interface to discover relationships between namespaces
+
+Each namespace has an owning user namespace and now there is not way
+to discover these relationships.
+
+Pid and user namepaces are hierarchical. There is no way to discover
+parent-child relationships too.
+
+Why we may want to know relationships between namespaces?
+
+One use would be visualization, in order to understand the running system.
+Another would be to answer the question: what capability does process X have to
+perform operations on a resource governed by namespace Y?
+
+One more use-case (which usually called abnormal) is checkpoint/restart.
+In CRIU we age going to dump and restore nested namespaces.
+
+There [1] was a discussion about which interface to choose to determing
+relationships between namespaces.
+
+Eric suggested to add two ioctl-s [2]:
+> Grumble, Grumble.  I think this may actually a case for creating ioctls
+> for these two cases.  Now that random nsfs file descriptors are bind
+> mountable the original reason for using proc files is not as pressing.
+>
+> One ioctl for the user namespace that owns a file descriptor.
+> One ioctl for the parent namespace of a namespace file descriptor.
+
+$ man man7/namespaces.7
+...
+Since  Linux  4.X,  the  following  ioctl(2)  calls are supported for
+namespace file descriptors.  The correct syntax is:
+
+      fd = ioctl(ns_fd, ioctl_type);
+
+where ioctl_type is one of the following:
+
+NS_GET_USERNS
+      Returns a file descriptor that refers to an owning user names‐
+      pace.
+
+NS_GET_PARENT
+      Returns  a  file descriptor that refers to a parent namespace.
+      This ioctl(2) can be used for pid  and  user  namespaces.  For
+      user namespaces, NS_GET_PARENT and NS_GET_USERNS have the same
+      meaning.
+
+In addition to generic ioctl(2) errors, the following  specific  ones
+can occur:
+
+EINVAL NS_GET_PARENT was called for a nonhierarchical namespace.
+
+EPERM  The  requested  namespace  is outside of the current namespace
+      scope.
+
+Here is an implementaions of these ioctl-s.
+
+[1] https://lkml.org/lkml/2016/7/6/158
+[2] https://lkml.org/lkml/2016/7/9/101
+
+Changes for v2:
+* don't return ENOENT for init_user_ns and init_pid_ns. There is nothing
+  outside of the init namespace, so we can return EPERM in this case too.
+
+> The fewer special cases the easier the code is to get
+> correct, and the easier it is to read. // Eric
+
+Cc: "Eric W. Biederman" <ebiederm@xmission.com>
+Cc: James Bottomley <James.Bottomley@HansenPartnership.com>
+Cc: "Michael Kerrisk (man-pages)" <mtk.manpages@gmail.com>
+Cc: "W. Trevor King" <wking@tremily.us>
+Cc: Alexander Viro <viro@zeniv.linux.org.uk>
+Cc: Serge Hallyn <serge.hallyn@canonical.com>
+
+--
+2.5.5
+
