@@ -1,0 +1,44 @@
+From 00b9969a4e3a8a2bf8a21976a0960bd5535822b3 Mon Sep 17 00:00:00 2001
+From: Andrey Vagin <avagin@openvz.org>
+Date: Wed, 13 Jul 2016 15:26:53 -0700
+Subject: [PATCH 0/5] Add an interface to discover relationships between namespaces
+
+Each namespace has an owning user namespace and now there is not way
+to discover these relationships.
+
+Pid and user namepaces are hierarchical. There is no way to discover
+parent-child relationships too.
+
+Why we may want to know relationships between namespaces?
+
+One use would be visualization, in order to understand the running system.
+Another would be to answer the question: what capability does process X have to
+perform operations on a resource governed by namespace Y?
+
+Another use-case (which usually called abnormal) is checkpoint/restart.
+In CRIU we age going to dump and restore nested namespaces.
+
+There [1] was a discussion about which interface to choose to determing
+relationships between namespaces.
+
+Eric suggested to add two ioctl-s [2]:
+> Grumble, Grumble.  I think this may actually a case for creating ioctls
+> for these two cases.  Now that random nsfs file descriptors are bind
+> mountable the original reason for using proc files is not as pressing.
+>
+> One ioctl for the user namespace that owns a file descriptor.
+> One ioctl for the parent namespace of a namespace file descriptor.
+
+Here is an implementaions of these ioctl-s.
+
+[1] https://lkml.org/lkml/2016/7/6/158
+[2] https://lkml.org/lkml/2016/7/9/101
+
+Cc: "Eric W. Biederman" <ebiederm@xmission.com>
+Cc: James Bottomley <James.Bottomley@HansenPartnership.com>
+Cc: "Michael Kerrisk (man-pages)" <mtk.manpages@gmail.com>
+Cc: "W. Trevor King" <wking@tremily.us>
+
+--
+2.5.5
+
