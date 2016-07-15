@@ -379,7 +379,10 @@ struct net *copy_net_ns(unsigned long flags,
 
 	get_user_ns(user_ns);
 
-	mutex_lock(&net_mutex);
+	rv = mutex_lock_killable(&net_mutex);
+	if (rv < 0)
+		goto out;
+
 	net->ucounts = ucounts;
 	rv = setup_net(net, user_ns);
 	if (rv == 0) {
@@ -388,6 +391,7 @@ struct net *copy_net_ns(unsigned long flags,
 		rtnl_unlock();
 	}
 	mutex_unlock(&net_mutex);
+out:
 	if (rv < 0) {
 		dec_net_namespaces(ucounts);
 		put_user_ns(user_ns);
