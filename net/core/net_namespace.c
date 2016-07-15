@@ -363,7 +363,10 @@ struct net *copy_net_ns(unsigned long flags,
 
 	get_user_ns(user_ns);
 
-	mutex_lock(&net_mutex);
+	rv = mutex_lock_killable(&net_mutex);
+	if (rv < 0)
+		goto out;
+
 	rv = setup_net(net, user_ns);
 	if (rv == 0) {
 		rtnl_lock();
@@ -371,6 +374,7 @@ struct net *copy_net_ns(unsigned long flags,
 		rtnl_unlock();
 	}
 	mutex_unlock(&net_mutex);
+out:
 	if (rv < 0) {
 		put_user_ns(user_ns);
 		net_drop_ns(net);
