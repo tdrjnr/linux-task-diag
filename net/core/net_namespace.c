@@ -406,10 +406,20 @@ static void cleanup_net(struct work_struct *work)
 	struct net *net, *tmp;
 	struct list_head net_kill_list;
 	LIST_HEAD(net_exit_list);
+	int i = 0;
 
 	/* Atomically snapshot the list of namespaces to cleanup */
 	spin_lock_irq(&cleanup_list_lock);
-	list_replace_init(&cleanup_list, &net_kill_list);
+	list_for_each_entry_safe(net, tmp, &cleanup_list, cleanup_list)
+		if (++i == 32)
+			break;
+	if (i == 32) {
+		list_cut_position(&net_kill_list,
+				  &cleanup_list, &net->cleanup_list);
+		queue_work(netns_wq, work);
+	} else {
+		list_replace_init(&cleanup_list, &net_kill_list);
+	}
 	spin_unlock_irq(&cleanup_list_lock);
 
 	mutex_lock(&net_mutex);
