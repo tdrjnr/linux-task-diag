@@ -2,7 +2,7 @@ TEST_PROGS := owner pidns
 
 CFLAGS := -Wall -Werror
 
-all: owner pidns
+all: owner pidns nsowner
 owner: owner.c
 pidns: pidns.c
 

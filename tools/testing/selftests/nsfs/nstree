@@ -1,0 +1,52 @@
+#!/usr/bin/env python2
+
+from subprocess import Popen, PIPE
+import os, re, fcntl
+
+NS_GET_USERNS = 0xb701
+NS_GET_PARENT = 0xb702
+
+handled = set()
+namespaces = {}
+roots = set()
+
+def get_relative(path, ioctl):
+    fd = open(path)
+    try:
+        owner = fcntl.ioctl(fd.fileno(), ioctl)
+    except:
+        return ""
+    fd.close()
+    owner_id = os.readlink("/proc/self/fd/%d" % owner)
+    os.close(owner)
+    return owner_id
+
+for d in os.listdir("/proc"):
+	if not re.match("^[0-9]*$", d):
+		continue
+	for n in os.listdir("/proc/%s/ns" % d):
+                path = "/proc/%s/ns/%s" % (d, n)
+		nsid = os.readlink(path)
+                if nsid in handled:
+                    continue
+                else:
+                    handled.add(nsid)
+                for ioctl in [NS_GET_USERNS, NS_GET_PARENT]:
+                    relative = get_relative(path, ioctl)
+                    if not relative:
+                        if ioctl == NS_GET_USERNS:
+                            roots.add(nsid)
+                        continue;
+                    if namespaces.get(relative) == None:
+                        namespaces[relative] = set()
+                    namespaces[relative].add(nsid)
+
+def print_children(nsid, depth):
+    if depth:
+        print "    " * (depth - 1),
+        print "\__ ",
+    print nsid
+    for c in namespaces.get(nsid, []):
+        print_children(c, depth + 1)
+for r in roots:
+    print_children(r, 0)
