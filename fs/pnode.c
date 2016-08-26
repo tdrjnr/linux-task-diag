@@ -399,10 +399,24 @@ static void mark_umount_candidates(struct mount *mnt)
 
 	BUG_ON(parent == mnt);
 
+	if (IS_MNT_MARKED(mnt))
+		return;
+
 	for (m = propagation_next(parent, parent); m;
 			m = propagation_next(m, parent)) {
-		struct mount *child = __lookup_mnt_last(&m->mnt,
+		struct mount *child = __lookup_mnt(&m->mnt,
 						mnt->mnt_mountpoint);
+
+		while (child && child->mnt.mnt_flags & MNT_UMOUNT) {
+			/*
+			 * Mark umounted mounts to not call
+			 * __propagate_umount for them again.
+			 */
+			SET_MNT_MARK(child);
+			child = __lookup_mnt_cont(child, &m->mnt,
+							mnt->mnt_mountpoint);
+		}
+
 		if (child && (!IS_MNT_LOCKED(child) || IS_MNT_MARKED(m))) {
 			SET_MNT_MARK(child);
 		}
@@ -420,6 +434,9 @@ static void __propagate_umount(struct mount *mnt)
 
 	BUG_ON(parent == mnt);
 
+	if (IS_MNT_MARKED(mnt))
+		return;
+
 	for (m = propagation_next(parent, parent); m;
 			m = propagation_next(m, parent)) {
 
@@ -430,6 +447,8 @@ static void __propagate_umount(struct mount *mnt)
 		 * and the child is marked safe to unmount.
 		 */
 		if (!child || !IS_MNT_MARKED(child))
+			continue;
+		if (child->mnt.mnt_flags & MNT_UMOUNT)
 			continue;
 		CLEAR_MNT_MARK(child);
 		if (list_empty(&child->mnt_mounts)) {
@@ -454,7 +473,7 @@ int propagate_umount(struct list_head *list)
 	list_for_each_entry_reverse(mnt, list, mnt_list)
 		mark_umount_candidates(mnt);
 
-	list_for_each_entry(mnt, list, mnt_list)
+	list_for_each_entry_reverse(mnt, list, mnt_list)
 		__propagate_umount(mnt);
 	return 0;
 }
