@@ -399,10 +399,28 @@ static void mark_umount_candidates(struct mount *mnt)
 
 	BUG_ON(parent == mnt);
 
+	if (IS_MNT_MARKED(mnt))
+		return;
+
+	SET_MNT_MARK(mnt);
+
 	for (m = propagation_next(parent, parent); m;
 			m = propagation_next(m, parent)) {
-		struct mount *child = __lookup_mnt_last(&m->mnt,
-						mnt->mnt_mountpoint);
+		struct mount *child = NULL, *p;
+
+		for (p = __lookup_mnt(&m->mnt, mnt->mnt_mountpoint); p;
+		     p = __lookup_mnt_cont(p, &m->mnt, mnt->mnt_mountpoint)) {
+			/*
+			 * Do this work only once for mounts from
+			 * the same propagation chain.
+			 */
+			if (p->mnt.mnt_flags & MNT_UMOUNT) {
+				SET_MNT_MARK(p);
+				continue;
+			}
+			child = p;
+		}
+
 		if (child && (!IS_MNT_LOCKED(child) || IS_MNT_MARKED(m))) {
 			SET_MNT_MARK(child);
 		}
@@ -420,11 +438,33 @@ static void __propagate_umount(struct mount *mnt)
 
 	BUG_ON(parent == mnt);
 
+	/*
+	 * All mounts has been marked in mark_umount_candidates(), so
+	 * here the absence of the mark means that it has been handled
+	 * already.
+	 */
+	if (!IS_MNT_MARKED(mnt))
+		return;
+
+	CLEAR_MNT_MARK(mnt);
+
 	for (m = propagation_next(parent, parent); m;
 			m = propagation_next(m, parent)) {
 
-		struct mount *child = __lookup_mnt_last(&m->mnt,
-						mnt->mnt_mountpoint);
+		struct mount *child = NULL, *p;
+
+		for (p = __lookup_mnt(&m->mnt, mnt->mnt_mountpoint); p;
+		     p = __lookup_mnt_cont(p, &m->mnt, mnt->mnt_mountpoint)) {
+			/*
+			 * Do this work only once for mounts from
+			 * the same propagation chain.
+			 */
+			if (p->mnt.mnt_flags & MNT_UMOUNT) {
+				CLEAR_MNT_MARK(p);
+				continue;
+			}
+			child = p;
+		}
 		/*
 		 * umount the child only if the child has no children
 		 * and the child is marked safe to unmount.
