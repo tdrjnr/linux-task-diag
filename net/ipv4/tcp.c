@@ -1088,6 +1088,7 @@ static int tcp_repair_state(struct sock *sk, int state)
 	case TCP_ESTABLISHED:
 		break;
 
+	case TCP_CLOSE:
 	case TCP_FIN_WAIT2:
 	case TCP_TIME_WAIT:
 		if (tp->snd_una != tp->write_seq)
@@ -1097,8 +1098,8 @@ static int tcp_repair_state(struct sock *sk, int state)
 
 		if (state == TCP_TIME_WAIT)
 			tcp_fin(sk);
-
-		break;
+		if (state != TCP_CLOSE)
+			break;
 
 	case TCP_CLOSE_WAIT:
 	case TCP_LAST_ACK:
