@@ -2276,6 +2276,46 @@ static inline int tree_contains_unbindable(struct mount *mnt)
 	return 0;
 }
 
+static int do_set_group(struct path *path, const char *sibling_name)
+{
+	struct path sibling_path;
+	struct mount *sibling, *mnt;
+	int err;
+
+	if (!sibling_name || !*sibling_name)
+		return -EINVAL;
+
+	err = kern_path(sibling_name, LOOKUP_FOLLOW, &sibling_path);
+	if (err)
+		return err;
+
+	sibling = real_mount(sibling_path.mnt);
+	mnt = real_mount(path->mnt);
+
+	namespace_lock();
+
+	err = -EINVAL;
+	if (sibling->mnt.mnt_sb != mnt->mnt.mnt_sb)
+		goto out_unlock;
+
+	if (!sibling->mnt_group_id || !IS_MNT_SHARED(sibling))
+		goto out_unlock;
+
+	if (IS_MNT_SHARED(mnt))
+		goto out_unlock;
+
+	mnt->mnt_group_id = sibling->mnt_group_id;
+	list_add(&mnt->mnt_share, &sibling->mnt_share);
+	set_mnt_shared(mnt);
+
+	err = 0;
+out_unlock:
+	namespace_unlock();
+
+	path_put(&sibling_path);
+	return err;
+}
+
 static int do_move_mount(struct path *path, const char *old_name)
 {
 	struct path old_path, parent_path;
@@ -2754,6 +2794,8 @@ long do_mount(const char *dev_name, const char __user *dir_name,
 		retval = do_change_type(&path, flags);
 	else if (flags & MS_MOVE)
 		retval = do_move_mount(&path, dev_name);
+	else if (flags & MS_SET_GROUP)
+		retval = do_set_group(&path, dev_name);
 	else
 		retval = do_new_mount(&path, type_page, flags, mnt_flags,
 				      dev_name, data_page);
