@@ -652,27 +652,14 @@ struct mount *__lookup_mnt_last(struct vfsmount *mnt, struct dentry *dentry)
 		goto out;
 	if (!(p->mnt.mnt_flags & MNT_UMOUNT))
 		res = p;
-	for (; p != NULL; p = __lookup_mnt_cont(p, mnt, dentry)) {
+	hlist_for_each_entry_continue(p, mnt_hash) {
+		if (&p->mnt_parent->mnt != mnt || p->mnt_mountpoint != dentry)
+			break;
 		if (!(p->mnt.mnt_flags & MNT_UMOUNT))
 			res = p;
 	}
 out:
 	return res;
-}
-
-struct mount *__lookup_mnt_cont(struct mount *p,
-				struct vfsmount *mnt, struct dentry *dentry)
-{
-	struct hlist_node *node = p->mnt_hash.next;
-
-	if (!node)
-		return NULL;
-
-	p = hlist_entry(node, struct mount, mnt_hash);
-	if (&p->mnt_parent->mnt != mnt || p->mnt_mountpoint != dentry)
-		return NULL;
-
-	return p;
 }
 
 /*
