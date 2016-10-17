@@ -30,7 +30,7 @@ extern int rtnl_trylock(void);
 extern int rtnl_is_locked(void);
 
 extern wait_queue_head_t netdev_unregistering_wq;
-extern struct mutex net_mutex;
+extern struct rw_semaphore net_mutex;
 
 #ifdef CONFIG_PROVE_LOCKING
 extern bool lockdep_rtnl_is_held(void);
