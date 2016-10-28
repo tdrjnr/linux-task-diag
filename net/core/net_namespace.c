@@ -27,7 +27,7 @@
 
 static LIST_HEAD(pernet_list);
 static struct list_head *first_device = &pernet_list;
-DECLARE_RWSEM(net_mutex);
+DEFINE_MUTEX(net_mutex);
 
 LIST_HEAD(net_namespace_list);
 EXPORT_SYMBOL_GPL(net_namespace_list);
@@ -59,7 +59,7 @@ static int net_assign_generic(struct net *net, int id, void *data)
 {
 	struct net_generic *ng, *old_ng;
 
-	BUG_ON(!rwsem_is_locked(&net_mutex));
+	BUG_ON(!mutex_is_locked(&net_mutex));
 	BUG_ON(id == 0);
 
 	old_ng = rcu_dereference_protected(net->gen,
@@ -379,7 +379,9 @@ struct net *copy_net_ns(unsigned long flags,
 
 	get_user_ns(user_ns);
 
-	down_read(&net_mutex);
+	rv = mutex_lock_killable(&net_mutex);
+	if (rv < 0)
+		goto out;
 
 	net->ucounts = ucounts;
 	rv = setup_net(net, user_ns);
@@ -388,7 +390,7 @@ struct net *copy_net_ns(unsigned long flags,
 		list_add_tail_rcu(&net->list, &net_namespace_list);
 		rtnl_unlock();
 	}
-	up_read(&net_mutex);
+	mutex_unlock(&net_mutex);
 out:
 	if (rv < 0) {
 		dec_net_namespaces(ucounts);
@@ -414,7 +416,7 @@ static void cleanup_net(struct work_struct *work)
 	list_replace_init(&cleanup_list, &net_kill_list);
 	spin_unlock_irq(&cleanup_list_lock);
 
-	down_read(&net_mutex);
+	mutex_lock(&net_mutex);
 
 	/* Don't let anyone else find us. */
 	rtnl_lock();
@@ -454,7 +456,7 @@ static void cleanup_net(struct work_struct *work)
 	list_for_each_entry_reverse(ops, &pernet_list, list)
 		ops_free_list(ops, &net_exit_list);
 
-	up_read(&net_mutex);
+	mutex_unlock(&net_mutex);
 
 	/* Ensure there are no outstanding rcu callbacks using this
 	 * network namespace.
@@ -765,7 +767,7 @@ static int __init net_ns_init(void)
 
 	rcu_assign_pointer(init_net.gen, ng);
 
-	down_read(&net_mutex);
+	mutex_lock(&net_mutex);
 	if (setup_net(&init_net, &init_user_ns))
 		panic("Could not setup the initial network namespace");
 
@@ -775,7 +777,7 @@ static int __init net_ns_init(void)
 	list_add_tail_rcu(&init_net.list, &net_namespace_list);
 	rtnl_unlock();
 
-	up_read(&net_mutex);
+	mutex_unlock(&net_mutex);
 
 	register_pernet_subsys(&net_ns_ops);
 
@@ -914,9 +916,9 @@ static void unregister_pernet_operations(struct pernet_operations *ops)
 int register_pernet_subsys(struct pernet_operations *ops)
 {
 	int error;
-	down_write(&net_mutex);
+	mutex_lock(&net_mutex);
 	error =  register_pernet_operations(first_device, ops);
-	up_write(&net_mutex);
+	mutex_unlock(&net_mutex);
 	return error;
 }
 EXPORT_SYMBOL_GPL(register_pernet_subsys);
@@ -932,9 +934,9 @@ EXPORT_SYMBOL_GPL(register_pernet_subsys);
  */
 void unregister_pernet_subsys(struct pernet_operations *ops)
 {
-	down_write(&net_mutex);
+	mutex_lock(&net_mutex);
 	unregister_pernet_operations(ops);
-	up_write(&net_mutex);
+	mutex_unlock(&net_mutex);
 }
 EXPORT_SYMBOL_GPL(unregister_pernet_subsys);
 
@@ -960,11 +962,11 @@ EXPORT_SYMBOL_GPL(unregister_pernet_subsys);
 int register_pernet_device(struct pernet_operations *ops)
 {
 	int error;
-	down_write(&net_mutex);
+	mutex_lock(&net_mutex);
 	error = register_pernet_operations(&pernet_list, ops);
 	if (!error && (first_device == &pernet_list))
 		first_device = &ops->list;
-	up_write(&net_mutex);
+	mutex_unlock(&net_mutex);
 	return error;
 }
 EXPORT_SYMBOL_GPL(register_pernet_device);
@@ -980,11 +982,11 @@ EXPORT_SYMBOL_GPL(register_pernet_device);
  */
 void unregister_pernet_device(struct pernet_operations *ops)
 {
-	down_write(&net_mutex);
+	mutex_lock(&net_mutex);
 	if (&ops->list == first_device)
 		first_device = first_device->next;
 	unregister_pernet_operations(ops);
-	up_write(&net_mutex);
+	mutex_unlock(&net_mutex);
 }
 EXPORT_SYMBOL_GPL(unregister_pernet_device);
 
