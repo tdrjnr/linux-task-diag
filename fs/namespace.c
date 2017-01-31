@@ -3440,6 +3440,12 @@ bool mnt_may_suid(struct vfsmount *mnt)
 	       current_in_userns(mnt->mnt_sb->s_user_ns);
 }
 
+int mnt_get_id(struct vfsmount *mnt)
+{
+	return real_mount(mnt)->mnt_id;
+}
+EXPORT_SYMBOL_GPL(mnt_get_id);
+
 static struct ns_common *mntns_get(struct task_struct *task)
 {
 	struct ns_common *ns = NULL;
