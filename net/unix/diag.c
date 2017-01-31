@@ -4,6 +4,7 @@
 #include <linux/unix_diag.h>
 #include <linux/skbuff.h>
 #include <linux/module.h>
+#include <linux/mount.h>
 #include <net/netlink.h>
 #include <net/af_unix.h>
 #include <net/tcp_states.h>
@@ -24,9 +25,11 @@ static int sk_diag_dump_vfs(struct sock *sk, struct sk_buff *nlskb)
 	struct dentry *dentry = unix_sk(sk)->path.dentry;
 
 	if (dentry) {
+		int mnt_id = mnt_get_id(unix_sk(sk)->path.mnt);
 		struct unix_diag_vfs uv = {
 			.udiag_vfs_ino = d_backing_inode(dentry)->i_ino,
 			.udiag_vfs_dev = dentry->d_sb->s_dev,
+			.udiag_vfs_mnt_id = mnt_id,
 		};
 
 		return nla_put(nlskb, UNIX_DIAG_VFS, sizeof(uv), &uv);

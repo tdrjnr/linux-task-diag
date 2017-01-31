@@ -48,6 +48,7 @@ enum {
 struct unix_diag_vfs {
 	__u32	udiag_vfs_ino;
 	__u32	udiag_vfs_dev;
+	__u32	udiag_vfs_mnt_id;
 };
 
 struct unix_diag_rqlen {
