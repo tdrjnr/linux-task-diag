@@ -20,6 +20,24 @@ static int sk_diag_dump_name(struct sock *sk, struct sk_buff *nlskb)
 		       addr->name->sun_path);
 }
 
+static int sk_diag_dump_path(struct sock *sk, struct sk_buff *nlskb,
+			     char *buffer, size_t bsize)
+{
+	char *path;
+
+	if (!unix_sk(sk)->path.dentry)
+		return 0;
+
+	path = dentry_path_raw(unix_sk(sk)->path.dentry, buffer, bsize);
+	if (IS_ERR(path)) {
+		/* return an empty path if a path is too long */
+		path = buffer + bsize - 1;
+		path[0] = 0;
+	}
+
+	return nla_put(nlskb, UNIX_DIAG_PATH, buffer + bsize - path, path);
+}
+
 static int sk_diag_dump_vfs(struct sock *sk, struct sk_buff *nlskb)
 {
 	struct dentry *dentry = unix_sk(sk)->path.dentry;
@@ -113,7 +131,8 @@ static int sk_diag_show_rqlen(struct sock *sk, struct sk_buff *nlskb)
 }
 
 static int sk_diag_fill(struct sock *sk, struct sk_buff *skb, struct unix_diag_req *req,
-		u32 portid, u32 seq, u32 flags, int sk_ino)
+		u32 portid, u32 seq, u32 flags, int sk_ino,
+		char *buffer, size_t buf_size)
 {
 	struct nlmsghdr *nlh;
 	struct unix_diag_msg *rep;
@@ -158,6 +177,10 @@ static int sk_diag_fill(struct sock *sk, struct sk_buff *skb, struct unix_diag_r
 	if (nla_put_u8(skb, UNIX_DIAG_SHUTDOWN, sk->sk_shutdown))
 		goto out_nlmsg_trim;
 
+	if ((req->udiag_show & UDIAG_SHOW_PATH) &&
+	    sk_diag_dump_path(sk, skb, buffer, buf_size))
+		goto out_nlmsg_trim;
+
 	nlmsg_end(skb, nlh);
 	return 0;
 
@@ -167,7 +190,7 @@ out_nlmsg_trim:
 }
 
 static int sk_diag_dump(struct sock *sk, struct sk_buff *skb, struct unix_diag_req *req,
-		u32 portid, u32 seq, u32 flags)
+		u32 portid, u32 seq, u32 flags, char *buffer, size_t bsize)
 {
 	int sk_ino;
 
@@ -178,19 +201,28 @@ static int sk_diag_dump(struct sock *sk, struct sk_buff *skb, struct unix_diag_r
 	if (!sk_ino)
 		return 0;
 
-	return sk_diag_fill(sk, skb, req, portid, seq, flags, sk_ino);
+	return sk_diag_fill(sk, skb, req, portid, seq,
+				flags, sk_ino, buffer, bsize);
 }
 
 static int unix_diag_dump(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	struct unix_diag_req *req;
-	int num, s_num, slot, s_slot;
+	int num, s_num, slot, s_slot, buf_size;
 	struct net *net = sock_net(skb->sk);
+	char *buffer = NULL;
 
 	req = nlmsg_data(cb->nlh);
 
 	s_slot = cb->args[0];
 	num = s_num = cb->args[1];
+
+	if (req->udiag_show & UDIAG_SHOW_PATH) {
+		buffer = (char *)__get_free_page(GFP_KERNEL);
+		if (!buffer)
+			return -ENOMEM;
+		buf_size = PAGE_SIZE;
+	}
 
 	spin_lock(&unix_table_lock);
 	for (slot = s_slot;
@@ -209,7 +241,8 @@ static int unix_diag_dump(struct sk_buff *skb, struct netlink_callback *cb)
 			if (sk_diag_dump(sk, skb, req,
 					 NETLINK_CB(cb->skb).portid,
 					 cb->nlh->nlmsg_seq,
-					 NLM_F_MULTI) < 0)
+					 NLM_F_MULTI,
+					 buffer, buf_size))
 				goto done;
 next:
 			num++;
@@ -219,6 +252,7 @@ done:
 	spin_unlock(&unix_table_lock);
 	cb->args[0] = slot;
 	cb->args[1] = num;
+	free_page((unsigned long)buffer);
 
 	return skb->len;
 }
@@ -247,11 +281,12 @@ static int unix_diag_get_exact(struct sk_buff *in_skb,
 			       const struct nlmsghdr *nlh,
 			       struct unix_diag_req *req)
 {
-	int err = -EINVAL;
+	int err = -EINVAL, buf_size = 0;
 	struct sock *sk;
 	struct sk_buff *rep;
 	unsigned int extra_len;
 	struct net *net = sock_net(in_skb->sk);
+	char *buffer = NULL;
 
 	if (req->udiag_ino == 0)
 		goto out_nosk;
@@ -265,6 +300,14 @@ static int unix_diag_get_exact(struct sk_buff *in_skb,
 	if (err)
 		goto out;
 
+	if (req->udiag_show & UDIAG_SHOW_PATH) {
+		err = -ENOMEM;
+		buffer = (char *)__get_free_page(GFP_KERNEL);
+		if (!buffer)
+			goto out;
+		buf_size = PAGE_SIZE;
+	}
+
 	extra_len = 256;
 again:
 	err = -ENOMEM;
@@ -273,7 +316,8 @@ again:
 		goto out;
 
 	err = sk_diag_fill(sk, rep, req, NETLINK_CB(in_skb).portid,
-			   nlh->nlmsg_seq, 0, req->udiag_ino);
+			   nlh->nlmsg_seq, 0, req->udiag_ino,
+			   buffer, buf_size);
 	if (err < 0) {
 		nlmsg_free(rep);
 		extra_len += 256;
@@ -287,6 +331,7 @@ again:
 	if (err > 0)
 		err = 0;
 out:
+	free_page((unsigned long)buffer);
 	if (sk)
 		sock_put(sk);
 out_nosk:
