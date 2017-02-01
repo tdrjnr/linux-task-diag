@@ -1,0 +1,24 @@
+From f5879d54509352824a64a4511c2e9be75280d3f1 Mon Sep 17 00:00:00 2001
+From: Andrei Vagin <avagin@openvz.org>
+Date: Tue, 31 Jan 2017 16:44:50 -0800
+Subject: [PATCH 0/3 net-next] unix: report mnt_id and file system path for unix sockets
+
+Currently we don't have a way to get a real path to a unix socket.
+This set adds this ability to the socket diag interface.
+
+In CRIU we need this functionality to dump and restore unix sockets.
+
+Andrei Vagin (3):
+  fs: add a function to get mnt_id for vfsmount
+  unix: report mnt_id for unix sockets via socket_diag
+  unix: report file system path for unix sockets via socket_diag
+
+ fs/namespace.c                 |  6 ++++
+ include/linux/mount.h          |  1 +
+ include/uapi/linux/unix_diag.h |  3 ++
+ net/unix/diag.c                | 62 +++++++++++++++++++++++++++++++++++++-----
+ 4 files changed, 65 insertions(+), 7 deletions(-)
+
+-- 
+2.7.4
+
